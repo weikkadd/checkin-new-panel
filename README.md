@@ -44,33 +44,65 @@ license: mit
 - **浏览器自动化**：Playwright + playwright-extra + stealth
 - **定时任务**：cron 库
 - **通知**：Telegram Bot API
-- **部署**：Docker / DCDeploy / zo.computer / HuggingFace Spaces
 
-## 📦 部署方式
+---
+
+## 📦 部署教程
 
 ### 方式 1：Docker 部署（推荐）
 
+适合有 Docker 环境的用户，一键部署。
+
 ```bash
+# 1. 克隆代码
+git clone https://github.com/weikkadd/checkin-new-panel.git
+cd checkin-new-panel
+
+# 2. 构建镜像
 docker build -t checkin-new-panel .
+
+# 3. 启动容器
 docker run -d --name checkin-api -p 3000:3000 \
-  -e DATABASE_URL=mysql://... \
-  -e TG_BOT_TOKEN=... \
-  -e TG_CHAT_ID=... \
-  -e AUTH_TOKEN=simple-token-ok \
+  -e DATABASE_URL="mysql://用户名:密码@主机:4000/数据库名?ssl=%7B%22rejectUnauthorized%22%3Atrue%7D" \
+  -e TG_BOT_TOKEN="你的TG机器人Token" \
+  -e TG_CHAT_ID="你的TG群ID" \
+  -e AUTH_TOKEN="simple-token-ok" \
   -e PORT=3000 \
   -e GLOBAL_CRON="0 0 */6 * * *" \
   checkin-new-panel
+
+# 4. 验证
+docker logs checkin-api
+curl -s http://localhost:3000/ping  # 应返回 ok
 ```
 
-### 方式 2：DCDeploy 部署
+或者用 Docker Compose：
 
-1. Fork 本仓库
-2. 在 DCDeploy 创建环境，选 GitHub 部署
-3. 配置环境变量（见下方）
-4. 选 DCD-3（1GB）或更高配置
-5. 部署
+```yaml
+# docker-compose.yml
+version: '3'
+services:
+  checkin-api:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=mysql://用户名:密码@主机:4000/数据库名?ssl=%7B%22rejectUnauthorized%22%3Atrue%7D
+      - TG_BOT_TOKEN=你的TG机器人Token
+      - TG_CHAT_ID=你的TG群ID
+      - AUTH_TOKEN=simple-token-ok
+      - PORT=3000
+      - GLOBAL_CRON=0 0 */6 * * *
+    restart: unless-stopped
+```
 
-### 方式 3：VPS 部署（最稳定，需 1GB+ 内存）
+```bash
+docker-compose up -d
+```
+
+---
+
+### 方式 2：VPS 部署（最稳定，需 1GB+ 内存）
 
 适合有自己 VPS 的用户，7x24 稳定运行，不休眠。
 
@@ -78,11 +110,12 @@ docker run -d --name checkin-api -p 3000:3000 \
 # 1. SSH 连接 VPS
 ssh root@你的VPS_IP -p 端口
 
-# 2. 安装 Node.js 22
+# 2. 安装 Node.js 22 和 Git
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt install -y nodejs git
 
 # 3. 克隆代码
+cd /home
 git clone https://github.com/weikkadd/checkin-new-panel.git
 cd checkin-new-panel
 
@@ -93,7 +126,7 @@ npx playwright install-deps chromium
 
 # 5. 配置环境变量
 cat > .env << 'EOF'
-DATABASE_URL=mysql://user:pass@host:4000/db?ssl=...
+DATABASE_URL=mysql://用户名:密码@主机:4000/数据库名?ssl=%7B%22rejectUnauthorized%22%3Atrue%7D
 TG_BOT_TOKEN=你的TG机器人Token
 TG_CHAT_ID=你的TG群ID
 AUTH_TOKEN=simple-token-ok
@@ -104,31 +137,131 @@ EOF
 # 6. 编译
 npx tsc
 
-# 7. 用 pm2 守护进程（7x24 运行）
+# 7. 测试运行
+node dist/server/index.js
+# 看到 [DB] ✅ 数据库连接测试成功 后按 Ctrl+C 停止
+
+# 8. 用 pm2 守护进程（7x24 运行）
 npm install -g pm2
 pm2 start dist/server/index.js --name checkin-api
 pm2 save
-pm2 startup  # 设置开机自启
+pm2 startup  # 设置开机自启（按提示执行输出的命令）
+
+# 9. 验证
+curl -s http://localhost:3000/ping  # 应返回 ok
 ```
 
-### 方式 4：zo.computer 部署（免费）
+---
+
+### 方式 3：zo.computer 部署（免费 4GB）
+
+适合没有 VPS 的用户，免费 4GB 内存，但会休眠（需配合 CF Worker 保活）。
+
+```bash
+# 1. 注册 zo.computer，打开终端
+
+# 2. 克隆代码
+cd /home/workspace
+git clone https://github.com/weikkadd/checkin-new-panel.git
+cd checkin-new-panel
+
+# 3. 安装依赖
+npm install
+npx playwright install chromium
+npx playwright install-deps chromium
+
+# 4. 配置环境变量
+cat > .env << 'EOF'
+DATABASE_URL=mysql://用户名:密码@主机:4000/数据库名?ssl=%7B%22rejectUnauthorized%22%3Atrue%7D
+TG_BOT_TOKEN=你的TG机器人Token
+TG_CHAT_ID=你的TG群ID
+AUTH_TOKEN=simple-token-ok
+PORT=3000
+GLOBAL_CRON=0 0 */6 * * *
+EOF
+
+# 5. 编译并启动
+npx tsc
+node dist/server/index.js
+
+# 6. 用 supervisord 守护进程
+# zo.computer 自带 supervisord，配置文件在 /etc/zo/supervisord-user.conf
+supervisorctl -c /etc/zo/supervisord-user.conf restart checkin-api
+```
+
+> **注意**：zo.computer 免费版会休眠，必须配合 CF Worker 保活（见方式 7）。
+
+---
+
+### 方式 4：DCDeploy 部署（付费，按量计费）
+
+印度 PaaS 平台，不休眠，按量计费（DCD-3 1GB ~$4/月）。
+
+1. 注册 https://dash.dcdeploy.com
+2. 开通「优点」套餐
+3. 点「创造环境」，配置：
+   - 名称：`checkin-api`
+   - 来源：GitHub
+   - 存储库：`https://github.com/weikkadd/checkin-new-panel`
+   - 参考资料：`main`
+   - Dockerfile Name：`./Dockerfile`
+   - 端口：`3000`
+   - 机器类型：DCD-3（1GB）或 DCD-4（2GB）
+4. 添加环境变量（见下方环境变量说明）
+5. 点 CONTINUE 部署
+
+---
+
+### 方式 5：HuggingFace Spaces 部署（免费 16GB）
+
+免费 16GB 内存，48 小时不访问才休眠。
+
+1. 打开 https://huggingface.co/new-space
+2. 配置：Space name = `checkin-api`，SDK = Docker，Hardware = CPU basic (16GB)，Public
+3. 推送代码：
 
 ```bash
 git clone https://github.com/weikkadd/checkin-new-panel.git
 cd checkin-new-panel
-npm install
-npx tsc
-# 配置 .env
-# 用 supervisord 守护进程
-# 配合 CF Worker 保活防休眠
+git remote add hf https://用户名:Token@huggingface.co/spaces/用户名/checkin-api
+git push hf main --force
 ```
 
-### 方式 5：HuggingFace Spaces 部署（免费 16GB）
+4. 在 Space Settings → Variables 里添加环境变量（注意 PORT = 7860）
+5. 配置 UptimeRobot 每 5 分钟 ping `/ping` 防休眠
 
-- SDK: Docker
-- 端口: 7860
-- 内存: 16GB（免费层）
-- 基础镜像: Playwright 官方镜像（内置 Chromium）
+> **注意**：HuggingFace 可能检测到 Playwright 并暂停 Space。
+
+---
+
+### 方式 6：Cloudflare Pages 前端部署
+
+前端面板部署在 Cloudflare Pages，连接后端 API。
+
+1. Cloudflare Dashboard → Workers & Pages → Create Pages → Connect to Git
+2. 选择仓库 `weikkadd/checkin-new-panel`
+3. 配置：
+   - Build command：`cd client && npm install && npm run build`
+   - Build output directory：`client/dist`
+4. 在 Settings → Environment variables 里添加：
+   - `VITE_API_URL` = `https://你的后端地址/trpc`
+5. 部署后访问 `https://checkin-new-panel.pages.dev`
+
+---
+
+### 方式 7：CF Worker 保活服务
+
+防止 zo.computer / HuggingFace Spaces 休眠。
+
+1. Cloudflare Dashboard → Workers & Pages → Create Worker → 名称 `checkin-keepalive`
+2. 粘贴代码（见 `scripts/cf-worker-keepalive.js`）
+3. 添加环境变量：
+   - `PING_URL` = `https://你的后端地址/trpc/task.getAll?batch=1&input=%7B%220%22%3A%7B%22json%22%3Anull%7D%7D`
+   - `TG_BOT_TOKEN` = `你的TG机器人Token`
+   - `TG_CHAT_ID` = `你的TG群ID`
+4. 添加 Cron Trigger：`*/3 * * * *`（每 3 分钟执行）
+
+---
 
 ## ⚙️ 环境变量
 
@@ -145,7 +278,7 @@ npx tsc
 |------|------|--------|
 | `TG_BOT_TOKEN` | Telegram Bot Token | - |
 | `TG_CHAT_ID` | Telegram Chat ID | - |
-| `PORT` | 服务端口 | `3000` |
+| `PORT` | 服务端口 | `3000`（HuggingFace 用 `7860`） |
 | `GLOBAL_CRON` | 全局 Cron 表达式 | `0 0 */6 * * *` |
 | `TG_API_PROXY` | TG API 代理 | `https://api.telegram.org` |
 
@@ -205,25 +338,39 @@ SUCCESS_KEYWORD:续期成功|renewed|已续期|Renew server
 
 ## 🔧 管理命令
 
+### pm2（VPS）
+
+```bash
+pm2 start dist/server/index.js --name checkin-api   # 启动
+pm2 restart checkin-api                               # 重启
+pm2 logs checkin-api                                  # 看日志
+pm2 list                                              # 看状态
+```
+
 ### supervisord（zo.computer）
 
 ```bash
-# 重启服务
-supervisorctl -c /etc/zo/supervisord-user.conf restart checkin-api
-
-# 看状态
-supervisorctl -c /etc/zo/supervisord-user.conf status
-
-# 看日志
-tail -f /dev/shm/checkin-api.log
+supervisorctl -c /etc/zo/supervisord-user.conf restart checkin-api   # 重启
+supervisorctl -c /etc/zo/supervisord-user.conf status                # 看状态
+tail -f /dev/shm/checkin-api.log                                     # 看日志
 ```
 
-### pm2
+### Docker
 
 ```bash
-pm2 start dist/server/index.js --name checkin-api
-pm2 restart checkin-api
-pm2 logs checkin-api
+docker logs checkin-api          # 看日志
+docker restart checkin-api       # 重启
+docker stop checkin-api          # 停止
+```
+
+### 更新代码
+
+```bash
+cd /项目目录
+git pull origin main
+npm install
+npx tsc
+# 然后重启服务（pm2 restart / supervisorctl restart / docker restart）
 ```
 
 ### API 接口
@@ -239,7 +386,7 @@ curl -X POST http://localhost:3000/trpc/task.runNow?batch=1 \
   -d '{"0":{"json":{"taskId":1}}}'
 
 # 查看任务日志
-curl http://localhost:3000/trpc/task.getLogs?input={"json":{"taskId":1,"limit":5}} \
+curl "http://localhost:3000/trpc/task.getLogs?input=%7B%22json%22%3A%7B%22taskId%22%3A1%2C%22limit%22%3A5%7D%7D" \
   -H "Authorization: Bearer simple-token-ok"
 ```
 
@@ -248,20 +395,6 @@ curl http://localhost:3000/trpc/task.getLogs?input={"json":{"taskId":1,"limit":5
 - ✅ 续期成功通知（带剩余时间）
 - ❌ 续期失败告警
 - 🔘 群内按钮：自动续期 / 手动签到 / 测试通知 / 查看日志 / 编辑任务 / 打开面板
-
-## 🔄 防休眠方案
-
-### zo.computer
-- 用 CF Worker 每 3 分钟 ping `/ping`
-- supervisord 守护进程，崩溃自动重启
-
-### HuggingFace Spaces
-- 用 UptimeRobot 每 5 分钟 ping `/ping`
-- 48 小时不访问会休眠
-
-### DCDeploy / Railway
-- PaaS 平台，不休眠
-- 按用量计费
 
 ## 📄 License
 
