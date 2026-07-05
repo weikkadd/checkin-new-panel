@@ -1,5 +1,5 @@
 ---
-title: Checkin New Panel
+title: dads
 emoji: 🎮
 colorFrom: indigo
 colorTo: purple
