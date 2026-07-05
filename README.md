@@ -27,6 +27,16 @@ license: mit
 - 🖥️ **Web 面板**：可视化任务管理（Cloudflare Pages 前端）
 - 📊 **日志记录**：每次执行结果 + 截图 + 错误信息
 
+## 🕵️ 引擎特性
+
+- **反爬虫伪装**：5 种 UA 池 + 5 种视口 + 隐藏 navigator.webdriver + 伪造 plugins/languages/platform/chrome 对象
+- **自动填表**：13+ 种用户名选择器 + 7+ 种密码选择器 + 14+ 种登录按钮选择器，覆盖绝大多数站点
+- **结果检测**：中英文关键词识别（"密码错误"/"login failed" 等）
+- **失败截图**：执行异常时也保存截图到数据库
+- **自定义脚本**：支持 task.customScript 在浏览器上下文执行任意 JS
+- **自动通知**：成功/失败都发送 Telegram 通知
+- **完整日志**：taskId + taskName + success + errorMsg + duration + screenshot + createdAt
+
 ## 🏗️ 技术栈
 
 - **后端**：Node.js 22 + Express + tRPC + Drizzle ORM + MySQL/TiDB
