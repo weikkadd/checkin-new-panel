@@ -106,8 +106,8 @@ export const appRouter = t.router({
       alertDays: z.number().min(0),
       taskType: z.string().optional(),
       customScript: z.string().optional(),
-      renewButtonText: z.string().optional(),
-      cookies: z.string().optional(),
+      renewButtonText: z.string().nullable().optional(),
+      cookies: z.string().nullable().optional(),
       renewThresholdMinutes: z.number().min(0).default(0),
       execMode: z.number().min(1).max(3).default(1),
       enabled: z.boolean()
@@ -123,11 +123,11 @@ export const appRouter = t.router({
       alertDays: z.number().min(0).optional(),
       taskType: z.string().optional(),
       customScript: z.string().optional(),
-      renewButtonText: z.string().optional(),
-      cookies: z.string().optional(),
+      renewButtonText: z.string().nullable().optional(),
+      cookies: z.string().nullable().optional(),
       renewThresholdMinutes: z.number().min(0).optional(),
       execMode: z.number().min(1).max(3).optional(),
-      cronExpr: z.string().optional(),
+      cronExpr: z.string().nullable().optional(),
       enabled: z.boolean().optional(),
       shareLink: z.string().optional()
     })).mutation(async ({ input }) => {
