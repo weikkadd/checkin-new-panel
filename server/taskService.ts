@@ -375,20 +375,49 @@ async function handleTurnstileCaptcha(page: any, maxWaitMs: number = 20000): Pro
       if (!modal) return false;
       const style = window.getComputedStyle(modal);
       return style.display !== 'none' && style.display !== '';
-    }, { timeout: 8000 });
+    }, { timeout: 15000 });  // 增加到 15 秒，避免误判
     modalVisible = true;
     console.log("[taskService] ✅ Turnstile 弹窗已出现");
   } catch {
-    console.log("[taskService] ⚠️ 8 秒内未出现 Turnstile 弹窗，可能不需要验证");
+    console.log("[taskService] ⚠️ 15 秒内未出现 Turnstile 弹窗，可能不需要验证");
     return true;
   }
   
   console.log("[taskService] ⏳ Turnstile 验证弹窗已出现，等待自动通过...");
   
+  // 记录点击前的剩余时间，用于判断是否真的续期成功
+  let beforeTime: string | null = null;
+  try {
+    const beforeText = await page.evaluate(() => document.body.innerText).catch(() => "");
+    beforeTime = extractRemainingTime(beforeText);
+    console.log(`[taskService] ⏰ 验证前剩余时间: ${beforeTime || "未提取到"}`);
+  } catch {}
+  
   // 2. 等待 Turnstile widget 渲染并自动验证
   const startTime = Date.now();
+  let hasFailureRetry = false;  // 检测是否有 failure_retry
+  
   while (Date.now() - startTime < maxWaitMs) {
     await sleep(2000);
+    
+    // 检查 Turnstile iframe URL 是否包含 failure_retry（表示验证失败）
+    try {
+      const frames = page.frames();
+      for (const frame of frames) {
+        const url = frame.url();
+        if (url.includes('challenges.cloudflare.com') || url.includes('turnstile')) {
+          if (url.includes('failure_retry')) {
+            hasFailureRetry = true;
+            console.log(`[taskService] ⚠️ 检测到 failure_retry，Turnstile 验证失败`);
+          } else if (hasFailureRetry) {
+            // 之前有 failure_retry，现在没有了，说明重新验证了
+            hasFailureRetry = false;
+            console.log(`[taskService] ✅ failure_retry 消失，重新验证中`);
+          }
+          break;
+        }
+      }
+    } catch {}
     
     // 检查弹窗是否消失（验证通过后弹窗会关闭）
     try {
@@ -399,7 +428,31 @@ async function handleTurnstileCaptcha(page: any, maxWaitMs: number = 20000): Pro
       }).catch(() => 'error');
       
       if (display === 'none' || display === 'gone') {
-        console.log("[taskService] ✅ Turnstile 弹窗已关闭，验证通过！");
+        // 弹窗关闭了，检查剩余时间是否增加来判断是否真的通过
+        const afterText = await page.evaluate(() => document.body.innerText).catch(() => "");
+        const afterTime = extractRemainingTime(afterText);
+        console.log(`[taskService] ⏰ 验证后剩余时间: ${afterTime || "未提取到"}`);
+        
+        // 对比时间是否增加
+        if (beforeTime && afterTime) {
+          const beforeMins = parseRemainingMinutes(beforeTime);
+          const afterMins = parseRemainingMinutes(afterTime);
+          if (beforeMins !== null && afterMins !== null && afterMins > beforeMins) {
+            console.log(`[taskService] ✅ Turnstile 弹窗已关闭，剩余时间增加 ${afterMins - beforeMins} 分钟，验证通过！`);
+            return true;
+          } else {
+            console.log(`[taskService] ⚠️ Turnstile 弹窗已关闭，但剩余时间未增加 (${beforeTime} → ${afterTime})，验证可能失败`);
+            return false;  // 时间没增加，说明验证失败
+          }
+        }
+        
+        // 如果无法提取时间，检查是否有 failure_retry
+        if (hasFailureRetry) {
+          console.log("[taskService] ⚠️ Turnstile 弹窗已关闭，但有 failure_retry，验证失败");
+          return false;
+        }
+        
+        console.log("[taskService] ✅ Turnstile 弹窗已关闭，无法提取时间，假定验证通过");
         return true;
       }
     } catch {}
@@ -410,7 +463,7 @@ async function handleTurnstileCaptcha(page: any, maxWaitMs: number = 20000): Pro
       for (const frame of frames) {
         const url = frame.url();
         if (url.includes('challenges.cloudflare.com') || url.includes('turnstile')) {
-          console.log(`[taskService] 找到 Turnstile iframe: ${url}`);
+          console.log(`[taskService] 找到 Turnstile iframe: ${url.substring(0, 100)}...`);
           // 尝试用真实鼠标点击 checkbox（模拟人类操作）
           try {
             const checkbox = frame.locator('input[type="checkbox"], .cb-i, .mark').first();
@@ -456,9 +509,28 @@ async function handleTurnstileCaptcha(page: any, maxWaitMs: number = 20000): Pro
       }).catch(() => 'error');
       console.log(`[taskService] 按钮当前文字: ${btnText}`);
       
-      // 如果按钮恢复成 "+ 90 min" 且 enabled，说明验证通过
+      // 如果按钮恢复成 "+ 90 min" 且 enabled，检查时间是否增加
       if (btnText && (btnText.includes('+') || btnText.includes('90')) && !btnText.includes('loading')) {
-        console.log("[taskService] ✅ 按钮恢复可点击状态，验证通过！");
+        // 检查剩余时间是否增加
+        const afterText = await page.evaluate(() => document.body.innerText).catch(() => "");
+        const afterTime = extractRemainingTime(afterText);
+        if (beforeTime && afterTime) {
+          const beforeMins = parseRemainingMinutes(beforeTime);
+          const afterMins = parseRemainingMinutes(afterTime);
+          if (beforeMins !== null && afterMins !== null && afterMins > beforeMins) {
+            console.log(`[taskService] ✅ 按钮恢复可点击状态，剩余时间增加 ${afterMins - beforeMins} 分钟，验证通过！`);
+            return true;
+          } else {
+            console.log(`[taskService] ⚠️ 按钮恢复可点击状态，但剩余时间未增加 (${beforeTime} → ${afterTime})，验证失败`);
+            return false;
+          }
+        }
+        // 无法提取时间，检查 failure_retry
+        if (hasFailureRetry) {
+          console.log("[taskService] ⚠️ 按钮恢复，但有 failure_retry，验证失败");
+          return false;
+        }
+        console.log("[taskService] ✅ 按钮恢复可点击状态，无法提取时间，假定验证通过");
         return true;
       }
     } catch {}
