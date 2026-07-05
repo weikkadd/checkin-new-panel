@@ -53,8 +53,8 @@ license: mit
 
 | 方式 | 平台 | 费用 | 内存 | 说明 |
 |------|------|------|------|------|
-| 1 | [Docker](docs/DEPLOY-GUIDE.md#方式-1vps-部署最稳定推荐) | 自费 | 1GB+ | 推荐，一键部署 |
-| 2 | [VPS](docs/DEPLOY-GUIDE.md#方式-2docker-部署) | 自费 | 1GB+ | 最稳定，7x24 运行 |
+| 1 | [Docker](docs/DEPLOY-GUIDE.md#方式-2docker-部署) | 自费 | 1GB+ | 推荐，一键部署 |
+| 2 | [VPS](docs/DEPLOY-GUIDE.md#方式-1vps-部署最稳定推荐) | 自费 | 1GB+ | 最稳定，7x24 运行 |
 | 3 | [zo.computer](docs/DEPLOY-GUIDE.md#方式-3zocomputer-部署免费) | 免费 | 4GB | 需 CF Worker 保活 |
 | 4 | [DCDeploy](docs/DEPLOY-GUIDE.md#方式-4dcdeploy-部署付费按量计费) | ~$4/月 | 1GB+ | 按量计费 |
 | 5 | [HuggingFace Spaces](docs/DEPLOY-GUIDE.md#方式-5huggingface-spaces-部署免费-16gb) | 免费 | 16GB | 48h 休眠 |
