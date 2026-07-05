@@ -9,6 +9,28 @@ import type { Browser, Page } from "playwright";
 
 stealthChromium.use(StealthPlugin());
 
+// ===== UA 池（5 种） =====
+const UA_POOL = [
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+];
+
+// ===== 视口池（5 种） =====
+const VIEWPORT_POOL = [
+  { width: 1920, height: 1080 },
+  { width: 1536, height: 864 },
+  { width: 1440, height: 900 },
+  { width: 1366, height: 768 },
+  { width: 1280, height: 720 },
+];
+
+function getRandomFromPool<T>(pool: T[]): T {
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 // 任务级锁，防止同一任务并发执行
 // key=task.id, value=启动时间戳
 const runningTasks = new Map<number, number>();
@@ -643,6 +665,103 @@ async function runFetchTask(task: CheckinTask): Promise<RunResult> {
 }
 
 /**
+ * 自动填表登录（多选择器覆盖）
+ * 13+ 种用户名选择器 + 7+ 种密码选择器 + 14+ 种登录按钮选择器
+ */
+async function autoFillLoginForm(page: any, username: string, password: string): Promise<boolean> {
+  // 用户名选择器（13+ 种）
+  const usernameSelectors = [
+    'input[name="username"]', 'input[name="user"]', 'input[name="account"]',
+    'input[name="email"]', 'input[name="login"]', 'input[name="userid"]',
+    'input[type="email"]', 'input[type="text"][name*="user"]',
+    'input[type="text"][name*="account"]', 'input[type="text"][name*="email"]',
+    '#username', '#user', '#email', '#account',
+    'input[placeholder*="用户名"]', 'input[placeholder*="账号"]', 'input[placeholder*="邮箱"]',
+  ];
+
+  // 密码选择器（7+ 种）
+  const passwordSelectors = [
+    'input[name="password"]', 'input[name="passwd"]', 'input[name="pwd"]',
+    'input[type="password"]', '#password', '#passwd', '#pwd',
+    'input[placeholder*="密码"]',
+  ];
+
+  // 登录按钮选择器（14+ 种）
+  const loginButtonSelectors = [
+    'button[type="submit"]', 'button[type="button"][name*="login"]',
+    'button[name*="login"]', 'button[class*="login"]', 'button[id*="login"]',
+    'input[type="submit"]', 'input[type="button"][value*="登录"]', 'input[type="button"][value*="Login"]',
+    'a[class*="login"]', 'a[id*="login"]',
+    'button:has-text("登录")', 'button:has-text("Login")', 'button:has-text("Sign in")',
+    '[role="button"]:has-text("登录")',
+  ];
+
+  console.log("[autoFill] 开始查找用户名输入框...");
+  let usernameFilled = false;
+  for (const selector of usernameSelectors) {
+    try {
+      const el = page.locator(selector).first();
+      if (await el.isVisible({ timeout: 1000 }).catch(() => false)) {
+        await el.fill(username);
+        console.log(`[autoFill] ✅ 用户名填入成功: ${selector}`);
+        usernameFilled = true;
+        break;
+      }
+    } catch {}
+  }
+
+  if (!usernameFilled) {
+    console.log("[autoFill] ❌ 未找到用户名输入框");
+    return false;
+  }
+
+  console.log("[autoFill] 开始查找密码输入框...");
+  let passwordFilled = false;
+  for (const selector of passwordSelectors) {
+    try {
+      const el = page.locator(selector).first();
+      if (await el.isVisible({ timeout: 1000 }).catch(() => false)) {
+        await el.fill(password);
+        console.log(`[autoFill] ✅ 密码填入成功: ${selector}`);
+        passwordFilled = true;
+        break;
+      }
+    } catch {}
+  }
+
+  if (!passwordFilled) {
+    console.log("[autoFill] ❌ 未找到密码输入框");
+    return false;
+  }
+
+  console.log("[autoFill] 开始查找登录按钮...");
+  let loginClicked = false;
+  for (const selector of loginButtonSelectors) {
+    try {
+      const el = page.locator(selector).first();
+      if (await el.isVisible({ timeout: 1000 }).catch(() => false)) {
+        await el.click();
+        console.log(`[autoFill] ✅ 点击登录按钮成功: ${selector}`);
+        loginClicked = true;
+        break;
+      }
+    } catch {}
+  }
+
+  if (!loginClicked) {
+    // 兜底：按 Enter 键提交
+    await page.keyboard.press("Enter");
+    console.log("[autoFill] ⚠️ 未找到登录按钮，按 Enter 提交");
+    loginClicked = true;
+  }
+
+  // 等待页面跳转
+  await sleep(3000);
+  console.log("[autoFill] ✅ 登录流程完成");
+  return true;
+}
+
+/**
  * Playwright 签到模式（过 CF + 点击按钮）
  */
 async function runPlaywrightTask(task: CheckinTask): Promise<RunResult> {
@@ -657,9 +776,15 @@ async function runPlaywrightTask(task: CheckinTask): Promise<RunResult> {
              "--disable-blink-features=AutomationControlled", "--disable-infobars", "--window-size=1920,1080"],
     });
 
+    // 随机选择 UA 和视口
+    const randomUA = getRandomFromPool(UA_POOL);
+    const randomViewport = getRandomFromPool(VIEWPORT_POOL);
+    console.log(`[taskService] 🕵️ 使用 UA: ${randomUA.substring(0, 50)}...`);
+    console.log(`[taskService] 🕵️ 使用视口: ${randomViewport.width}x${randomViewport.height}`);
+
     const context = await browser.newContext({
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-      viewport: { width: 1920, height: 1080 },
+      userAgent: randomUA,
+      viewport: randomViewport,
       locale: "zh-CN",
       extraHTTPHeaders: {
         "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -669,14 +794,57 @@ async function runPlaywrightTask(task: CheckinTask): Promise<RunResult> {
       },
     });
 
-    // 隐藏 webdriver
+    // 增强反检测脚本（11 项指纹伪造）
     await context.addInitScript(() => {
+      // 1. 隐藏 webdriver
       Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+      // 2. 伪造 plugins
+      Object.defineProperty(navigator, "plugins", { get: () => [1, 2, 3, 4, 5] });
+      // 3. 伪造 languages
+      Object.defineProperty(navigator, "languages", { get: () => ["zh-CN", "zh", "en-US", "en"] });
+      // 4. 伪造 platform
+      Object.defineProperty(navigator, "platform", { get: () => "Win32" });
+      // 5. 伪造 hardwareConcurrency
+      Object.defineProperty(navigator, "hardwareConcurrency", { get: () => 8 });
+      // 6. 伪造 deviceMemory
+      Object.defineProperty(navigator, "deviceMemory", { get: () => 8 });
+      // 7. 伪造 WebGL 指纹
+      const getParameter = WebGLRenderingContext.prototype.getParameter;
+      WebGLRenderingContext.prototype.getParameter = function(parameter: number) {
+        if (parameter === 37445) return "Intel Inc.";
+        if (parameter === 37446) return "Intel Iris OpenGL Engine";
+        return getParameter.call(this, parameter);
+      };
+      // 8. 伪造 Chrome 对象
+      (window as any).chrome = { runtime: {}, loadTimes: () => ({}), csi: () => ({}), app: {} };
+      // 9. 伪造 permissions API
+      const originalQuery = (window as any).navigator.permissions.query;
+      (window as any).navigator.permissions.query = (parameters: any) => (
+        parameters.name === "notifications" ? Promise.resolve({ state: Notification.permission }) : originalQuery(parameters)
+      );
+      // 10. 伪造 canvas 指纹（添加噪声）
+      const toDataURL = HTMLCanvasElement.prototype.toDataURL;
+      HTMLCanvasElement.prototype.toDataURL = function(...args: any[]) {
+        const ctx = this.getContext("2d");
+        if (ctx) {
+          const imageData = ctx.getImageData(0, 0, this.width, this.height);
+          for (let i = 0; i < imageData.data.length; i += 4) {
+            imageData.data[i] += Math.floor(Math.random() * 10) - 5;
+            imageData.data[i + 1] += Math.floor(Math.random() * 10) - 5;
+            imageData.data[i + 2] += Math.floor(Math.random() * 10) - 5;
+          }
+          ctx.putImageData(imageData, 0, 0);
+        }
+        return toDataURL.apply(this, args as any);
+      };
+      // 11. 伪造 AudioContext 指纹
+      const getChannelData = AudioBuffer.prototype.getChannelData;
+      AudioBuffer.prototype.getChannelData = function(channel: number) {
+        const data = getChannelData.call(this, channel);
+        for (let i = 0; i < data.length; i += 100) { data[i] += Math.random() * 0.0001; }
+        return data;
+      };
     });
-
-    const page = await context.newPage();
-    page.setDefaultTimeout(30000);
-    page.setDefaultNavigationTimeout(60000);
 
     // Cookie 注入
     if (task.cookies && task.cookies.trim()) {
@@ -685,6 +853,16 @@ async function runPlaywrightTask(task: CheckinTask): Promise<RunResult> {
         await context.addCookies(cookies);
         console.log(`[taskService] ✅ 注入 ${cookies.length} 个 Cookie`);
       }
+    }
+
+    const page = await context.newPage();
+    page.setDefaultTimeout(30000);
+    page.setDefaultNavigationTimeout(60000);
+
+    // 自动填表（login 类型）
+    if (task.taskType === "login" && task.username && task.password) {
+      console.log("[taskService] 🔐 自动填表模式");
+      await autoFillLoginForm(page, task.username, task.password);
     }
 
     // 打开 URL

@@ -114,11 +114,11 @@ export async function createTask(data: {
   alertDays: number;
   taskType?: string;
   customScript?: string;
-  renewButtonText?: string;
-  cookies?: string;
+  renewButtonText?: string | null;
+  cookies?: string | null;
   renewThresholdMinutes?: number;
   execMode?: number;
-  cronExpr?: string;
+  cronExpr?: string | null;
   enabled: boolean;
   shareLink?: string;
 }) {
@@ -143,11 +143,11 @@ export async function updateTask(id: number, data: Partial<{
   alertDays: number;
   taskType?: string;
   customScript?: string;
-  renewButtonText?: string;
-  cookies?: string;
+  renewButtonText?: string | null;
+  cookies?: string | null;
   renewThresholdMinutes?: number;
   execMode?: number;
-  cronExpr?: string;
+  cronExpr?: string | null;
   enabled: boolean;
   shareLink?: string;
 }>) {
