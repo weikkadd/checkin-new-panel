@@ -122,6 +122,33 @@ def screenshot(sb, name: str):
     return p
 
 
+def save_html(sb, name: str):
+    """保存页面 HTML 源码，用于调试找不到按钮的问题"""
+    p = SHOT_DIR / f"{datetime.now():%H%M%S}_{name}.html"
+    try:
+        html = sb.get_page_source()
+        p.write_text(html, encoding="utf-8")
+        log.info(f"HTML: {p}")
+    except Exception as e:
+        log.warning(f"保存 HTML 失败: {e}")
+    return p
+
+
+def save_body_text(sb, name: str):
+    """保存页面 body 文本，用于调试"""
+    p = SHOT_DIR / f"{datetime.now():%H%M%S}_{name}.txt"
+    try:
+        txt = sb.get_text("body")
+        p.write_text(txt, encoding="utf-8")
+        log.info(f"Body 文本: {p}")
+        # 同时打印前 500 字到日志
+        preview = txt[:500].replace("\n", " | ")
+        log.info(f"Body 预览: {preview}")
+    except Exception as e:
+        log.warning(f"保存 body 文本失败: {e}")
+    return p
+
+
 # ---------------------------------------------------------------------------
 # 续期核心
 # ---------------------------------------------------------------------------
@@ -501,6 +528,9 @@ def run():
         log.info("等待 CF 盾 + 页面 JS 渲染（最长 60s）...")
         cf_keywords = ["just a moment", "checking your browser", "attention required",
                        "verifying you are human", "ddos protection", "cf-browser-verification"]
+        ready_keywords_strong = ["+ 90 min", "90 min remaining", "active session", "cap 48h"]
+        ready_keywords_weak  = ["gaming4free", "console", "remaining"]
+        page_ready = False
         for i in range(60):
             try:
                 body_lower = sb.get_text("body").lower() if sb.is_element_present("body") else ""
@@ -512,12 +542,17 @@ def run():
                     log.info(f"⏳ CF 盾未过 ({i}s)，继续等...")
                 time.sleep(1)
                 continue
-            # 如果页面有了 gaming4free 的关键标志（说明已进入），就停
-            if any(kw in body_lower for kw in ["gaming4free", "console", "remaining",
-                                                  "active session", "+ 90 min", "90 min"]):
-                log.info(f"✅ 页面已加载完成 ({i}s)")
+            # 强信号：看到 + 90 min / active session / cap 48h 之类，说明页面真的渲染好了
+            if any(kw in body_lower for kw in ready_keywords_strong):
+                log.info(f"✅ 页面已加载完成 ({i}s) - 强信号匹配")
+                page_ready = True
                 break
             time.sleep(1)
+
+        # 即使匹配到弱信号也要至少等 8 秒
+        if not page_ready:
+            log.info("⏳ 未检测到强信号，强制等待 8s 让 JS 渲染...")
+            time.sleep(8)
 
         # 再额外等 3 秒让 JS 完全渲染
         sb.sleep(3)
@@ -532,6 +567,9 @@ def run():
             sb.sleep(2)
 
         screenshot(sb, "dashboard")
+        # 同时保存 HTML 和 body 文本，方便排查"找不到按钮"的问题
+        save_html(sb, "dashboard")
+        save_body_text(sb, "dashboard")
 
         # Step 4: 主循环 - 反复点击续期直到接近 8h 上限
         click_count = 0
