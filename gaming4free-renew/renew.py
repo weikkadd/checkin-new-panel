@@ -596,8 +596,12 @@ def run():
         log.info("等待 CF 盾 + 页面 JS 渲染（最长 60s）...")
         cf_keywords = ["just a moment", "checking your browser", "attention required",
                        "verifying you are human", "ddos protection", "cf-browser-verification"]
+        # gaming4free 控制台特征关键词（看到任一就认为页面已加载）
         ready_keywords_strong = ["rt-btn-free", "rt-btn-paid", "active session", "cap 48h",
-                                   "remaining", "expires", "console"]
+                                   "remaining", "expires",
+                                   # 控制台页面特征（服务器详情页）
+                                   "uptime", "restart", "kill", "delete",
+                                   "minecraft java", "node ·", "console"]
         page_ready = False
         for i in range(60):
             try:
@@ -610,7 +614,7 @@ def run():
                     log.info(f"⏳ CF 盾未过 ({i}s)，继续等...")
                 time.sleep(1)
                 continue
-            # 强信号：看到 rt-btn-free / active session / remaining 等，说明页面真的渲染好了
+            # 强信号：看到 gaming4free 控制台特征，说明页面真的渲染好了
             if any(kw in body_lower for kw in ready_keywords_strong):
                 log.info(f"✅ 页面已加载完成 ({i}s) - 强信号匹配")
                 page_ready = True
@@ -672,12 +676,13 @@ def run():
                     clicked = sb.execute_script("""
                     (function(){
                         // gaming4free 服务器卡片通常是可点击的 div / a
-                        // 优先找带 server 字样的链接
-                        let links = document.querySelectorAll('a[href*="server"], a[href*="/server"]');
+                        // 优先找带 /server/{id} 路径的链接（id 可能是数字或字符串如 fb928b12）
+                        let links = document.querySelectorAll('a[href*="/server/"]');
                         for (let a of links) {
                             const href = a.getAttribute('href') || '';
-                            // 跳过 /servers 列表页本身
-                            if (/\\/server\\/\\d+/.test(href) || /\\/server\\/[a-z0-9_-]+/i.test(href)) {
+                            // 匹配 /server/xxx 但排除 /servers 列表页本身
+                            const m = href.match(/\\/server\\/([a-z0-9_-]+)/i);
+                            if (m && m[1].length >= 3) {
                                 a.click();
                                 return href;
                             }
@@ -691,14 +696,6 @@ def run():
                                 return 'button: ' + t;
                             }
                         }
-                        // 兜底2: 找服务器名字（你截图是 'kuys'）
-                        let cards = document.querySelectorAll('*');
-                        for (let c of cards) {
-                            const t = (c.textContent || '').trim();
-                            if (t.length > 0 && t.length < 50 && c.children.length === 0) {
-                                // 跳过纯文字节点
-                            }
-                        }
                         return '';
                     })()
                     """)
@@ -706,12 +703,12 @@ def run():
                         log.info(f"✅ 点击进入服务器: {clicked}")
                         sb.sleep(3)
                         # 等服务器页面加载
-                        for i in range(20):
+                        for i in range(30):
                             try:
                                 body_lower = sb.get_text("body").lower()
                                 if any(kw in body_lower for kw in ["rt-btn-free", "+90 min",
                                                                       "active session", "remaining",
-                                                                      "console"]):
+                                                                      "uptime", "restart", "console"]):
                                     log.info(f"✅ 服务器页面已加载 ({i}s)")
                                     break
                             except Exception:
@@ -719,6 +716,7 @@ def run():
                             time.sleep(1)
                         sb.sleep(2)
                         screenshot(sb, "server_page")
+                        save_body_text(sb, "server_page")
                     else:
                         log.warning("⚠️ 未找到服务器入口，可能需要手动指定 GF_SITE_URL")
                 except Exception as e:
