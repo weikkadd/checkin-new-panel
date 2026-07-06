@@ -363,7 +363,7 @@ async function clickButtonOnce(page: any, buttonText: string): Promise<boolean> 
  *
  * 返回: true=验证通过 / false=验证失败或超时
  */
-async function handleTurnstileCaptcha(page: any, maxWaitMs: number = 20000): Promise<boolean> {
+async function handleTurnstileCaptcha(page: any, maxWaitMs: number = 60000): Promise<boolean> {
   console.log("[taskService] 🔍 检测 Turnstile 验证弹窗...");
   
   // 1. 等 Turnstile 弹窗出现（点击后需要 1-3 秒才会弹出）
@@ -383,6 +383,14 @@ async function handleTurnstileCaptcha(page: any, maxWaitMs: number = 20000): Pro
     return true;
   }
   
+  // 模拟人类行为：在验证弹窗出现后，随机移动鼠标 3-5 秒
+  console.log("[taskService] 🖱️ 模拟人类鼠标移动...");
+  for (let i = 0; i < 5; i++) {
+    const x = 200 + Math.random() * 1520;
+    const y = 200 + Math.random() * 680;
+    await page.mouse.move(x, y, { steps: 10 + Math.floor(Math.random() * 15) });
+    await sleep(500 + Math.random() * 1000);
+  }
   console.log("[taskService] ⏳ Turnstile 验证弹窗已出现，等待自动通过...");
   
   // 记录点击前的剩余时间，用于判断是否真的续期成功
@@ -1040,6 +1048,8 @@ async function runPlaywrightTask(task: CheckinTask): Promise<RunResult> {
     let loopResultMsg = "";
     if (task.renewButtonText && task.renewButtonText.trim()) {
       console.log(`[taskService] 查找续期按钮: "${task.renewButtonText}"`);
+      // 模拟人类阅读页面：等待 3-5 秒后再点击
+      await sleep(3000 + Math.random() * 2000);
       await sleep(2000);
 
       const buttonText = task.renewButtonText.trim();
@@ -1058,7 +1068,7 @@ async function runPlaywrightTask(task: CheckinTask): Promise<RunResult> {
         // 点击 +90 min 后会弹出 #g4f-ts-modal 验证窗口
         // 在 stealth 模式下 Turnstile 通常会自动通过
         // ============================================
-        const tsPassed = await handleTurnstileCaptcha(page, 25000);
+        const tsPassed = await handleTurnstileCaptcha(page, 60000);
         if (!tsPassed) {
           renewMsg += ` | ⚠️ Turnstile 验证未通过`;
           console.log("[taskService] ⚠️ Turnstile 验证未通过，继续检查页面状态");
@@ -1164,7 +1174,7 @@ async function runPlaywrightTask(task: CheckinTask): Promise<RunResult> {
               await sleep(2000);
 
               // 处理 Turnstile 验证（每次点击后都可能弹出）
-              const tsPassed2 = await handleTurnstileCaptcha(page, 25000);
+              const tsPassed2 = await handleTurnstileCaptcha(page, 60000);
               if (!tsPassed2) {
                 console.log("[taskService] ⚠️ 循环点击后 Turnstile 验证未通过");
               }
