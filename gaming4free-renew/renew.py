@@ -659,6 +659,73 @@ def run():
         save_html(sb, "dashboard")
         save_body_text(sb, "dashboard")
 
+        # Step 3.5: 如果当前在服务器列表页，需要点进具体服务器才能看到 +90 min 按钮
+        # gaming4free 主页 /servers 显示服务器列表，点进某个服务器才能看到续期按钮
+        try:
+            body_text = sb.get_text("body").lower()
+            # 检测是否在服务器列表页
+            if ("my servers" in body_text or "servers" in body_text) and "rt-btn-free" not in body_text:
+                log.info("📋 当前在服务器列表页，尝试点进具体服务器...")
+
+                # 方案 1: 用 JS 找到第一个服务器卡片/链接并点击
+                try:
+                    clicked = sb.execute_script("""
+                    (function(){
+                        // gaming4free 服务器卡片通常是可点击的 div / a
+                        // 优先找带 server 字样的链接
+                        let links = document.querySelectorAll('a[href*="server"], a[href*="/server"]');
+                        for (let a of links) {
+                            const href = a.getAttribute('href') || '';
+                            // 跳过 /servers 列表页本身
+                            if (/\\/server\\/\\d+/.test(href) || /\\/server\\/[a-z0-9_-]+/i.test(href)) {
+                                a.click();
+                                return href;
+                            }
+                        }
+                        // 兜底：找 OPEN 按钮（你截图里有 OPEN →）
+                        let btns = document.querySelectorAll('a, button, [role="button"]');
+                        for (let b of btns) {
+                            const t = (b.textContent || '').trim().toLowerCase();
+                            if (t === 'open' || t === 'open →' || t === 'manage' || t === 'console') {
+                                b.click();
+                                return 'button: ' + t;
+                            }
+                        }
+                        // 兜底2: 找服务器名字（你截图是 'kuys'）
+                        let cards = document.querySelectorAll('*');
+                        for (let c of cards) {
+                            const t = (c.textContent || '').trim();
+                            if (t.length > 0 && t.length < 50 && c.children.length === 0) {
+                                // 跳过纯文字节点
+                            }
+                        }
+                        return '';
+                    })()
+                    """)
+                    if clicked:
+                        log.info(f"✅ 点击进入服务器: {clicked}")
+                        sb.sleep(3)
+                        # 等服务器页面加载
+                        for i in range(20):
+                            try:
+                                body_lower = sb.get_text("body").lower()
+                                if any(kw in body_lower for kw in ["rt-btn-free", "+90 min",
+                                                                      "active session", "remaining",
+                                                                      "console"]):
+                                    log.info(f"✅ 服务器页面已加载 ({i}s)")
+                                    break
+                            except Exception:
+                                pass
+                            time.sleep(1)
+                        sb.sleep(2)
+                        screenshot(sb, "server_page")
+                    else:
+                        log.warning("⚠️ 未找到服务器入口，可能需要手动指定 GF_SITE_URL")
+                except Exception as e:
+                    log.warning(f"点进服务器失败: {e}")
+        except Exception as e:
+            log.warning(f"检测服务器列表页失败: {e}")
+
         # Step 4: 主循环 - 反复点击续期直到接近 8h 上限
         click_count = 0
         last_sec = get_remaining_seconds(sb)
