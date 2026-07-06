@@ -334,6 +334,8 @@ def run():
         sys.exit(1)
 
     # UC mode 启动
+    # 注意：seleniumbase SB() 不支持 ignore_certificate_errors / disable_cookies / localized
+    # 这些参数会引发 TypeError。改用 chromium_arg 传递浏览器启动参数。
     with SB(
         browser="chromium",
         uc=True,                                # undetected chromedriver
@@ -342,11 +344,10 @@ def run():
         incognito=False,
         agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        disable_cookies=False,
-        ignore_certificate_errors=True,
+        chromium_arg="--ignore-certificate-errors",
         proxy=WARP_PROXY,
         ad_block=False,                          # 别开 ad block，可能误杀 Turnstile
-        localized=False,
+        locale_code="en",
     ) as sb:
 
         sb.set_window_size(1280, 800)
