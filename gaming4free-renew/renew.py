@@ -778,21 +778,37 @@ def run():
             handle_turnstile(sb)
 
             # Step 4.3: 等待响应
+            click_time = time.time()  # 记录点击时间戳
             human_sleep(3.0, 5.0)
             sb.sleep(2)
 
             # Step 4.4: 对比时间
+            # 重要：剩余时间是自然递减的，所以新读的时间会比旧时间少（除非续期生效）
+            # 正确算法：新时间 > (旧时间 - 经过秒数 + 60s 缓冲) 才算续期成功
             new_sec = get_remaining_seconds(sb)
-            delta = new_sec - last_sec if new_sec > 0 and last_sec > 0 else 0
-            log.info(f"点击 #{click_count+1}: {last_sec}s → {new_sec}s (Δ={delta}s)")
+            elapsed = int(time.time() - click_time)
+            if last_sec > 0 and new_sec > 0:
+                # 期望最低值 = 旧时间 - 经过秒数 - 30s（容忍页面刷新延迟）
+                expected_min = last_sec - elapsed - 30
+                # 续期成功判定：新时间比期望最低值高 60s 以上（说明确实加了时间）
+                success = new_sec > expected_min + 60
+                delta = new_sec - last_sec
+                log.info(f"点击 #{click_count+1}: {last_sec}s → {new_sec}s (Δ={delta}s, 经过 {elapsed}s, 期望最低 {expected_min}s)")
+            elif new_sec > 0 and last_sec <= 0:
+                # 之前没识别到时间，现在识别到了，算成功
+                success = True
+                log.info(f"点击 #{click_count+1}: 之前未识别 → {new_sec}s")
+            else:
+                success = False
+                log.warning(f"点击 #{click_count+1}: 时间仍未识别")
 
-            if new_sec > last_sec or (last_sec <= 0 and new_sec > 0):
+            if success:
                 click_count += 1
                 log.info(f"✅ 续期成功 (累计 {click_count} 次)")
                 screenshot(sb, f"success_{click_count}")
                 last_sec = new_sec
             else:
-                log.warning(f"⚠️ 续期可能失败，时间未增加")
+                log.warning(f"⚠️ 续期可能失败")
                 screenshot(sb, f"fail_{click_count}")
                 # 失败一次重试刷新
                 sb.refresh()
