@@ -118,6 +118,47 @@ MAX_CLICKS:35
 SUCCESS_KEYWORD:续期成功|renewed|已续期|Renew server
 ```
 
+## 🆕 gaming4free 独立续期方案（GHA + WARP）
+
+> VPS 后端跑 Turnstile 死活过不去？换 GitHub Actions + WARP 出口，几乎必过。
+
+### 为什么需要这个独立方案？
+
+| 项 | VPS 后端 | GHA + WARP |
+|---|---|---|
+| 出口 IP | 机房 IP（CF 黑名单） | CF 自家 IP |
+| Turnstile 通过率 | ❌ 0% | ✅ ~95% |
+| 维护成本 | 高 | 低 |
+| 费用 | VPS 月费 | 免费（公开仓库） |
+
+### 文件位置
+
+- `.github/workflows/gaming4free.yml` — GitHub Actions 工作流
+- `gaming4free-renew/renew.py` — 续期主脚本
+- `gaming4free-renew/requirements.txt` — Python 依赖
+- [`gaming4free-renew/README.md`](gaming4free-renew/README.md) — 详细部署说明
+
+### 配置步骤
+
+1. **配 Secrets**：仓库 → `Settings` → `Secrets and variables` → `Actions`
+   - `MC_USERNAME`（必填）
+   - `GF_SITE_URL`（必填，续期页面 URL）
+   - `MC_PASSWORD` / `GF_LOGIN_URL` / `GF_COOKIE`（可选）
+   - `TG_BOT_TOKEN` / `TG_CHAT_ID`（可选，要 TG 通知就填）
+
+2. **手动触发测试**：`Actions` → `gaming4free renew` → `Run workflow`
+   - 跑完下载 `screenshots-*` artifact 看截图
+
+3. **自动续期**：默认 `cron: "13 */2 * * *"`（每 2 小时），gaming4free 上限 48h 完全够
+
+4. **VPS 后端禁用 gaming4free 任务**：避免重复跑
+
+> ⚠️ **务必用公开仓库**，私有仓库 GHA 每月 2000 分钟不够用。
+
+详细说明见 👉 [`gaming4free-renew/README.md`](gaming4free-renew/README.md)
+
+---
+
 ## 🎯 任务类型说明
 
 ### 🔗 link（链接签到）
