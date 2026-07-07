@@ -70,10 +70,19 @@ def tg(msg: str, silent: bool = False):
         msg: 消息内容
         silent: 是否静默发送（无通知音）
     """
-    if not (TG_TOKEN and TG_CHAT_ID):
+    # 调试日志：每次调用都打印（前 50 字）
+    msg_preview = msg.replace("\n", " | ")[:80]
+    log.info(f"📧 TG 通知调用: silent={silent}, msg={msg_preview}")
+
+    if not TG_TOKEN:
+        log.warning("⚠️ TG_BOT_TOKEN 为空，跳过通知（检查 Secret 是否配置）")
         return
+    if not TG_CHAT_ID:
+        log.warning("⚠️ TG_CHAT_ID 为空，跳过通知（检查 Secret 是否配置）")
+        return
+
     try:
-        requests.post(
+        resp = requests.post(
             f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
             json={
                 "chat_id": TG_CHAT_ID,
@@ -83,8 +92,17 @@ def tg(msg: str, silent: bool = False):
             },
             timeout=10,
         )
+        # 打印响应状态和内容
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("ok"):
+                log.info(f"✅ TG 通知发送成功 (message_id={data.get('result',{}).get('message_id')})")
+            else:
+                log.warning(f"⚠️ TG 通知返回 ok=false: {data}")
+        else:
+            log.warning(f"⚠️ TG 通知 HTTP {resp.status_code}: {resp.text[:200]}")
     except Exception as e:
-        log.warning(f"TG 通知失败: {e}")
+        log.warning(f"❌ TG 通知异常: {e}")
 
 
 def fmt_duration(sec: int) -> str:
@@ -869,6 +887,9 @@ def run():
     log.info(f"WARP 代理: {WARP_PROXY}")
     log.info(f"目标站点: {SITE_URL}")
     log.info(f"MC 用户:  {USERNAME or '(未配置)'}")
+    # 调试：打印 TG 配置状态（不打印 token 本身）
+    log.info(f"TG_BOT_TOKEN: {'✅ 已配置 (长度=' + str(len(TG_TOKEN)) + ')' if TG_TOKEN else '❌ 未配置'}")
+    log.info(f"TG_CHAT_ID: {'✅ ' + TG_CHAT_ID if TG_CHAT_ID else '❌ 未配置'}")
     log.info("=" * 60)
 
     # TG 启动通知
