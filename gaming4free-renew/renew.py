@@ -223,27 +223,65 @@ def get_remaining_seconds(sb) -> int:
 
 
 def get_cooldown_seconds(sb) -> int:
-    """从页面提取 'expires MM:SS' 冷却剩余秒数（-1 表示无冷却）
+    """从按钮文字提取冷却剩余秒数（-1 表示无冷却）
 
-    gaming4free 冷却中页面会显示 'expires 04:45' 表示还需等 4 分 45 秒才能再次续期
+    gaming4free 按钮冷却时文字变成 'xx cd' 格式：
+    - '4m cd' = 4 分钟冷却
+    - '30s cd' = 30 秒冷却
+    - '2m 30s cd' = 2 分 30 秒冷却
+
+    注意：页面上的 'expires 02:48 PM' 是服务器到期时间（绝对时钟），
+    NOT 按钮冷却时间，不能用来判断冷却剩余。
     """
     try:
-        # 优先用 JS 找包含 'expires' 关键词的元素文本
+        # 从按钮文字直接读取冷却时间
+        try:
+            txt = sb.execute_script("""
+            (function(){
+                const btn = document.querySelector('button.rt-btn-free, .rt-btn-free, button[wire\\\\:click="extendFree"]');
+                if (btn) {
+                    return (btn.textContent || '').trim();
+                }
+                return '';
+            })()
+            """)
+            if txt:
+                log.info(f"按钮文字: {txt}")
+                # 匹配 '4m cd' / '30s cd' / '2m 30s cd' / '1h 5m cd' 等
+                import re
+                total = 0
+                # 匹配 Xh
+                m = re.search(r"(\d+)\s*h", txt.lower())
+                if m:
+                    total += int(m.group(1)) * 3600
+                # 匹配 Xm
+                m = re.search(r"(\d+)\s*m", txt.lower())
+                if m:
+                    total += int(m.group(1)) * 60
+                # 匹配 Xs
+                m = re.search(r"(\d+)\s*s", txt.lower())
+                if m:
+                    total += int(m.group(1))
+                # 必须包含 'cd' 才算冷却中
+                if total > 0 and "cd" in txt.lower():
+                    log.info(f"冷却剩余 [按钮文字] = {txt} → {total}s")
+                    return total
+                # 如果按钮文字是 '+90 min'，说明没冷却
+                if "min" in txt.lower() or "+90" in txt.lower():
+                    log.info(f"按钮可用（无冷却）: {txt}")
+                    return 0
+        except Exception:
+            pass
+
+        # 兜底：扫描页面所有元素找 'xx cd' 文字
         try:
             txt = sb.execute_script("""
             (function(){
                 const all = document.querySelectorAll('*');
                 for (const el of all) {
-                    if (el.children.length > 0) continue;  // 只看叶子节点
+                    if (el.children.length > 0) continue;
                     const t = (el.textContent || '').trim();
-                    if (/^expires\\s+\\d{1,2}:\\d{2}(:\\d{2})?$/i.test(t)) {
-                        return t;
-                    }
-                }
-                // 兜底：在所有元素里找
-                for (const el of all) {
-                    const t = (el.textContent || '').trim();
-                    if (/expires\\s+\\d{1,2}:\\d{2}/i.test(t) && el.children.length <= 2) {
+                    if (/\\d+\\s*[hms]\\s*cd$/i.test(t)) {
                         return t;
                     }
                 }
@@ -251,33 +289,20 @@ def get_cooldown_seconds(sb) -> int:
             })()
             """)
             if txt:
-                # 提取 MM:SS 或 HH:MM:SS
                 import re
-                m = re.search(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", txt)
-                if m:
-                    if m.group(3):  # HH:MM:SS
-                        sec = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
-                    else:  # MM:SS
-                        sec = int(m.group(1)) * 60 + int(m.group(2))
-                    log.info(f"冷却剩余 [expires] = {txt} → {sec}s")
-                    return sec
+                total = 0
+                m = re.search(r"(\d+)\s*h", txt.lower())
+                if m: total += int(m.group(1)) * 3600
+                m = re.search(r"(\d+)\s*m", txt.lower())
+                if m: total += int(m.group(1)) * 60
+                m = re.search(r"(\d+)\s*s", txt.lower())
+                if m: total += int(m.group(1))
+                if total > 0:
+                    log.info(f"冷却剩余 [扫描] = {txt} → {total}s")
+                    return total
         except Exception:
             pass
 
-        # 兜底：整页文本找
-        body_text = sb.get_text("body")
-        for line in body_text.split("\n"):
-            if "expires" in line.lower():
-                import re
-                m = re.search(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", line)
-                if m:
-                    if m.group(3):
-                        sec = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
-                    else:
-                        sec = int(m.group(1)) * 60 + int(m.group(2))
-                    if 0 < sec < 3600:  # 冷却一般不会超过 1 小时
-                        log.info(f"冷却剩余 [body line] = {line.strip()} → {sec}s")
-                        return sec
         return -1
     except Exception as e:
         log.warning(f"提取冷却时间失败: {e}")
@@ -776,11 +801,11 @@ def run():
             # Step 4.1: 点击续期按钮
             if not click_renew_button(sb):
                 # 按钮没点到 - 可能是冷却中（按钮文字变成 'xx cd'）或不在页面
-                # 检查 expires / cooldown 时间，自动等到冷却结束
+                # 检查按钮冷却时间，自动等到冷却结束
                 cooldown_left = get_cooldown_seconds(sb)
                 if cooldown_left > 0:
                     wait_sec = cooldown_left + 10  # 多等 10s 保险
-                    log.info(f"⏳ 续期按钮冷却中，expires={cooldown_left}s，等待 {wait_sec}s 后重试")
+                    log.info(f"⏳ 续期按钮冷却中，剩余 {cooldown_left}s，等待 {wait_sec}s 后重试")
                     screenshot(sb, f"cooldown_{click_count}")
                     # 分段等，每 30s 打一次日志
                     for i in range(0, wait_sec, 30):
