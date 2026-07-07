@@ -32,7 +32,7 @@ PASSWORD       = os.getenv("MC_PASSWORD", "")           # 密码（如需）
 COOKIE_STR     = os.getenv("GF_COOKIE", "")             # 备用：直接注入 cookie
 WARP_PROXY     = "socks5://127.0.0.1:40000"
 
-MAX_HOURS      = 48            # 续期上限 48 小时（页面显示 'cap 48h'）
+MAX_HOURS      = 46            # 续期上限 46 小时（gaming4free cap 48h，留 2h 缓冲避免溢出）
 ADD_MINUTES    = 90            # 每次点击 +90 分钟
 COOLDOWN_SEC   = 285           # 冷却 4 分 45 秒（页面显示 expires 04:45）
 MAX_CLICKS     = 30            # 单次运行最大点击次数（防死循环）
@@ -1097,17 +1097,20 @@ def run():
             handle_turnstile(sb)
 
             # Step 4.3: 处理广告弹窗（gaming4free 按钮是 "watch ad · +90 min"）
-            # 点击后会弹出广告，必须看完广告或点击 Skip 才会加时间
+            # 点击后会弹出广告，必须看完广告才会加时间
             click_time = time.time()  # 记录点击时间戳
             log.info("📺 检查广告弹窗...")
             ad_handled = handle_ad_popup(sb)
 
-            # Step 4.4: 等待 Livewire AJAX 响应 / 时间更新
-            log.info("⏳ 等待续期生效（最长 30s）...")
-            for wait_i in range(30):
+            # Step 4.4: 等待续期生效（最长 120s）
+            # 优先检测 cooldown 出现 = 成功（最可靠）
+            # 其次检测时间增加 = 成功
+            log.info("⏳ 等待续期生效（最长 120s，检测 cooldown 或时间增加）...")
+            cooldown_detected = False
+            for wait_i in range(120):
                 time.sleep(1)
                 try:
-                    # 检测按钮文字是否变成冷却中（说明续期成功了）
+                    # 优先检测：按钮文字是否变成冷却中（最可靠的成功标志）
                     loading = sb.driver.execute_script(
                         "var btn = document.querySelector('button.rt-btn-free, .rt-btn-free');"
                         "if (btn) {"
@@ -1117,33 +1120,48 @@ def run():
                         "return '';"
                     )
                     if loading and loading.startswith("cooldown:"):
-                        log.info(f"✅ 按钮进入冷却状态 [{loading}]，续期成功！")
+                        log.info(f"✅ 按钮进入冷却状态 [{loading}]，续期成功！（{wait_i}s）")
+                        cooldown_detected = True
                         break
                 except Exception:
                     pass
 
+                # 每 30s 打一次进度日志
+                if wait_i > 0 and wait_i % 30 == 0:
+                    cur_sec = get_remaining_seconds(sb)
+                    log.info(f"  等待中 ({wait_i}s)，当前剩余: {cur_sec}s")
+
             # 再等 3 秒让时间更新
             sb.sleep(3)
 
-            # Step 4.4: 对比时间
-            # 重要：剩余时间是自然递减的，所以新读的时间会比旧时间少（除非续期生效）
-            # 正确算法：新时间 > (旧时间 - 经过秒数 + 60s 缓冲) 才算续期成功
+            # Step 4.5: 判断续期是否成功
+            # 判断优先级：
+            # 1. cooldown 出现 = 成功（最可靠）
+            # 2. 时间增加 = 成功
+            # 3. 都没有 = 失败
             new_sec = get_remaining_seconds(sb)
             elapsed = int(time.time() - click_time)
-            if last_sec > 0 and new_sec > 0:
-                # 期望最低值 = 旧时间 - 经过秒数 - 30s（容忍页面刷新延迟）
+
+            if cooldown_detected:
+                # cooldown 出现 = 一定成功
+                success = True
+                delta = new_sec - last_sec if (new_sec > 0 and last_sec > 0) else 0
+                log.info(f"点击 #{click_count+1}: {last_sec}s → {new_sec}s (Δ={delta}s, 经过 {elapsed}s) ✅ cooldown确认成功")
+            elif last_sec > 0 and new_sec > 0:
+                # 没有 cooldown，看时间是否增加
                 expected_min = last_sec - elapsed - 30
-                # 续期成功判定：新时间比期望最低值高 60s 以上（说明确实加了时间）
                 success = new_sec > expected_min + 60
                 delta = new_sec - last_sec
-                log.info(f"点击 #{click_count+1}: {last_sec}s → {new_sec}s (Δ={delta}s, 经过 {elapsed}s, 期望最低 {expected_min}s)")
+                if success:
+                    log.info(f"点击 #{click_count+1}: {last_sec}s → {new_sec}s (Δ={delta}s, 经过 {elapsed}s) ✅ 时间增加确认成功")
+                else:
+                    log.warning(f"点击 #{click_count+1}: {last_sec}s → {new_sec}s (Δ={delta}s, 经过 {elapsed}s) ⚠️ 时间未增加，判定失败")
             elif new_sec > 0 and last_sec <= 0:
-                # 之前没识别到时间，现在识别到了，算成功
                 success = True
-                log.info(f"点击 #{click_count+1}: 之前未识别 → {new_sec}s")
+                log.info(f"点击 #{click_count+1}: 之前未识别 → {new_sec}s ✅")
             else:
                 success = False
-                log.warning(f"点击 #{click_count+1}: 时间仍未识别")
+                log.warning(f"点击 #{click_count+1}: 时间仍未识别 ⚠️ 判定失败")
 
             if success:
                 click_count += 1
