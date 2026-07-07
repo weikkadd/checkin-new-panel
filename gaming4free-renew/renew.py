@@ -406,69 +406,187 @@ def click_renew_button(sb) -> bool:
         log.warning(f"检查按钮状态失败: {e}")
         return False
 
-    # 终极兜底：用 JS 直接调用 Livewire API（绕过 wire:click 的 isTrusted 检查）
-    # gaming4free 按钮使用 Livewire wire:click="extendFree"
-    # 合成的 .click() 无法触发 wire:click，必须用 Livewire.find(id).call('extendFree')
-    # 注意：用 sb.driver.execute_script（selenium 原生）比 sb.execute_script 稳定
+    # 用 selenium 原生 click()（真实点击，能触发 wire:click + 弹广告）
+    # 之前用 Livewire.extendFree() 跳过了广告，后端不给时间
+    # 必须用真实 .click() 让广告自动播放，播完后时间才会加
     try:
-        clicked = sb.driver.execute_script(
-            "var btn = document.querySelector('button.rt-btn-free, .rt-btn-free');"
-            "if (!btn) return '';"
-            "var t = (btn.textContent || '').trim().toLowerCase();"
-            "if ((/cd$/i.test(t) && !/min/i.test(t)) || /wait/i.test(t)) return 'cooldown: ' + t;"
-            "if (btn.disabled) return 'disabled: ' + t;"
-            # 方法1: Livewire API
-            "if (window.Livewire) {"
-            "  var comp = btn.closest('[wire\\\\:id]');"
-            "  if (comp) {"
-            "    var cid = comp.getAttribute('wire:id');"
-            "    try {"
-            "      Livewire.find(cid).call('extendFree');"
-            "      return 'livewire-direct: extendFree (comp=' + cid + ', text=' + t + ')';"
-            "    } catch(e) {}"
-            "  }"
-            "  try {"
-            "    Livewire.dispatch('extendFree');"
-            "    return 'livewire-dispatch: extendFree';"
-            "  } catch(e) {}"
-            "}"
-            # 方法2: 模拟真实鼠标事件
-            "btn.scrollIntoView({block:'center'});"
-            "var r = btn.getBoundingClientRect();"
-            "var x = r.left + r.width/2, y = r.top + r.height/2;"
-            "var opts = {bubbles:true, cancelable:true, view:window, clientX:x, clientY:y, button:0, buttons:1};"
-            "btn.dispatchEvent(new MouseEvent('mousedown', opts));"
-            "btn.dispatchEvent(new MouseEvent('mouseup', opts));"
-            "btn.dispatchEvent(new MouseEvent('click', opts));"
-            "return 'mouse-event: ' + t;"
-        )
-        if clicked:
-            if clicked.startswith("cooldown:") or clicked.startswith("disabled:"):
-                log.info(f"⏳ JS 检测按钮处于冷却/禁用状态 [{clicked}]，跳过点击")
-                return False
-            log.info(f"✅ JS 兜底点击续期按钮 [{clicked}]")
+        # 找到按钮元素
+        btn = sb.driver.find_element("css selector", "button.rt-btn-free, .rt-btn-free")
+        if btn:
+            btn_text = (btn.text or "").strip().lower()
+            log.info(f"🖱️ 用 selenium 真实点击按钮 [{btn_text}]")
+            # 滚动到按钮
+            sb.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+            time.sleep(0.5)
+            # 真实点击
+            btn.click()
+            log.info(f"✅ 已点击续期按钮 [{btn_text}]")
             return True
         else:
-            log.warning("❌ JS 返回空，按钮可能不存在")
+            log.warning("❌ 未找到 rt-btn-free 按钮")
+            return False
     except Exception as e:
-        log.warning(f"JS 兜底点击失败: {e}")
+        log.warning(f"selenium 点击失败: {e}")
+        # 兜底：用 JS 模拟真实鼠标事件
+        try:
+            clicked = sb.driver.execute_script(
+                "var btn = document.querySelector('button.rt-btn-free, .rt-btn-free');"
+                "if (!btn) return '';"
+                "var t = (btn.textContent || '').trim().toLowerCase();"
+                "btn.scrollIntoView({block:'center'});"
+                "var r = btn.getBoundingClientRect();"
+                "var x = r.left + r.width/2, y = r.top + r.height/2;"
+                "var opts = {bubbles:true, cancelable:true, view:window, clientX:x, clientY:y, button:0, buttons:1};"
+                "btn.dispatchEvent(new MouseEvent('mousedown', opts));"
+                "btn.dispatchEvent(new MouseEvent('mouseup', opts));"
+                "btn.dispatchEvent(new MouseEvent('click', opts));"
+                "return 'mouse-event: ' + t;"
+            )
+            if clicked:
+                log.info(f"✅ JS 兜底点击 [{clicked}]")
+                return True
+        except Exception as e2:
+            log.warning(f"JS 兜底也失败: {e2}")
 
     log.warning("❌ 未找到续期按钮")
     return False
 
 
 def handle_ad_popup(sb) -> bool:
-    """处理 gaming4free 的广告弹窗（简化版：不等广告）
+    """处理 gaming4free 的广告弹窗
 
-    用户反馈：不用等广告
-    实际行为：点击 '+90 min' 按钮后，Livewire 后端会直接加 90 分钟
-    广告只是前端展示，不影响时间增加
+    点击 '+90 min' 按钮后，右下角会自动弹出广告（显示 'AD 0:26' 倒计时）
+    广告会自动播放 15-30 秒，播完后时间自动加上
+    不需要点任何按钮！点了 × 反而会取消广告不给奖励
 
-    所以这里只等 3 秒确认点击生效，不等待广告播完
+    正确逻辑：
+    1. 等 3 秒让广告加载
+    2. 检测广告元素（AD XX:XX 倒计时文字 + video + iframe）
+    3. 等广告自然消失（最长 60s）
+    4. 不要点 × 或 Skip 按钮
     """
-    log.info("📺 不等广告，只确认点击生效（3s）...")
+    log.info("📺 检测广告弹窗（最长等 60s，等广告自然播完）...")
+
+    # 先等 3 秒让广告弹窗加载
     time.sleep(3)
-    return True
+
+    ad_detected = False
+    last_video_time = -1
+    last_video_time_stuck_count = 0
+    no_ad_count = 0
+
+    for i in range(60):
+        try:
+            # 检测广告状态
+            ad_status = sb.driver.execute_script(
+                # 检测广告文字（如 "AD 0:26"）
+                "var adText = '';"
+                "var allEls = document.querySelectorAll('*');"
+                "for (var e = 0; e < allEls.length; e++) {"
+                "  var t = (allEls[e].textContent || '').trim();"
+                "  if (/^AD\\s+\\d{1,2}:\\d{2}/i.test(t) && allEls[e].children.length === 0) {"
+                "    adText = t; break;"
+                "  }"
+                "}"
+                # 检测广告 iframe
+                "var iframes = document.querySelectorAll('iframe');"
+                "var adIframes = [];"
+                "for (var i2 = 0; i2 < iframes.length; i2++) {"
+                "  var src = iframes[i2].src || '';"
+                "  var w = iframes[i2].getBoundingClientRect().width;"
+                "  var h = iframes[i2].getBoundingClientRect().height;"
+                "  if (w > 200 && h > 100 && (src.indexOf('imasdk') >= 0 || src.indexOf('ad') >= 0 || src.indexOf('vungle') >= 0 || src.indexOf('unity') >= 0 || src.indexOf('reward') >= 0 || src.indexOf('video') >= 0 || src === '')) {"
+                "    adIframes.push(src.substring(0, 60) + ' (' + w + 'x' + h + ')');"
+                "  }"
+                "}"
+                # 检测 video 元素
+                "var videos = document.querySelectorAll('video');"
+                "var videoInfo = [];"
+                "for (var v = 0; v < videos.length; v++) {"
+                "  var vw = videos[v].getBoundingClientRect().width;"
+                "  var vh = videos[v].getBoundingClientRect().height;"
+                "  if (vw > 100 && vh > 100) videoInfo.push('paused=' + videos[v].paused + ' time=' + Math.round(videos[v].currentTime) + ' ended=' + videos[v].ended);"
+                "}"
+                "return JSON.stringify({adText: adText, ad: adIframes, video: videoInfo});"
+            )
+
+            has_ad = False
+            ad_text = ""
+            try:
+                import json
+                data = json.loads(ad_status) if ad_status else {}
+                ad_text = data.get("adText", "")
+                ad_iframes = data.get("ad", [])
+                videos = data.get("video", [])
+                if ad_text or ad_iframes or videos:
+                    has_ad = True
+            except Exception:
+                pass
+
+            if has_ad:
+                ad_detected = True
+                no_ad_count = 0
+                if ad_text:
+                    if i % 5 == 0 or i < 3:
+                        log.info(f"📺 广告播放中 ({i}s): {ad_text}")
+                else:
+                    if i % 5 == 0 or i < 3:
+                        log.info(f"📺 广告播放中 ({i}s): {ad_status[:150]}")
+
+                # 检测视频是否结束
+                video_ended = False
+                for v_info in videos:
+                    if "ended=true" in v_info:
+                        video_ended = True
+                if video_ended:
+                    log.info(f"✅ 广告视频已结束 ({i}s)")
+                    time.sleep(2)
+                    return True
+
+                # 检测视频卡住
+                if videos:
+                    import re
+                    for v_info in videos:
+                        m = re.search(r"time=(\d+)", v_info)
+                        if m:
+                            cur_time = int(m.group(1))
+                            if cur_time == last_video_time:
+                                last_video_time_stuck_count += 1
+                                if last_video_time_stuck_count >= 15:
+                                    log.info(f"⚠️ 视频卡住 15s，认为广告结束")
+                                    time.sleep(2)
+                                    return True
+                            else:
+                                last_video_time = cur_time
+                                last_video_time_stuck_count = 0
+                            break
+
+                time.sleep(1)
+
+            elif ad_detected:
+                # 之前有广告，现在没了
+                no_ad_count += 1
+                if no_ad_count >= 3:
+                    log.info(f"✅ 广告已消失 ({i}s)，认为播完了")
+                    return True
+                time.sleep(1)
+            else:
+                # 还没检测到广告
+                if i > 0 and i % 10 == 0:
+                    log.info(f"⏳ 等广告出现 ({i}s)...")
+                time.sleep(1)
+
+        except Exception as e:
+            if i == 0:
+                log.warning(f"广告检测异常: {e}")
+            time.sleep(1)
+
+    if ad_detected:
+        log.info("📺 广告处理超时（60s），继续后续流程")
+        return True
+    else:
+        log.info("📺 未检测到广告弹窗，可能按钮没生效或已直接给时间")
+        return False
 
 
 def handle_turnstile(sb) -> bool:
