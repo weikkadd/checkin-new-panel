@@ -2,181 +2,274 @@
 
 > 利用 GitHub Actions + Cloudflare WARP 出口 + seleniumbase UC mode 自动续期 gaming4free 服务器。
 > 因为 WARP 是 Cloudflare 自家 IP，Turnstile 几乎必过。
+> **支持多账号**、**TG 通知**、**自动恢复**。
 
 ## 🎯 原理对比
 
-| 方案 | 出口 IP | Turnstile 通过率 |
-|---|---|---|
-| VPS + playwright | 机房 IP（CF 黑名单） | ❌ 0% |
-| **GHA + WARP** | CF 自家 IP | ✅ ~95% |
+| 方案 | 出口 IP | Turnstile 通过率 | 费用 |
+|---|---|---|---|
+| VPS + playwright | 机房 IP（CF 黑名单） | ❌ 0% | VPS 月费 |
+| **GHA + WARP** | CF 自家 IP | ✅ ~95% | **免费**（公开仓库） |
+
+## ✨ 功能特性
+
+- 🔗 **WARP 代理** — Cloudflare 自家 IP，过 Turnstile
+- 🍪 **Cookie 注入** — 支持 Google OAuth 登录的站点
+- 🖱️ **Selenium 真实点击** — 触发 wire:click + 广告播放
+- 📺 **广告智能等待** — 检测 video ended/cooldown，不固定等
+- ⏱️ **cooldown 检测** — 最可靠的成功判断
+- 👥 **多账号支持** — matrix 策略，最多 3 账号串行跑
+- 📱 **TG 通知** — 7 个通知点，北京时间，带账号标识
+- 🔄 **自动恢复** — 异常自动重启最多 2 次
+- 🛡️ **Cloudflare Turnstile 处理** — 多种点击方式
 
 ## 📁 文件结构
 
 ```
-gaming4free-renew/
-├── .github/workflows/
-│   └── gaming4free.yml      # GitHub Actions 工作流
-├── renew.py                 # 续期主脚本
-├── requirements.txt         # Python 依赖
-└── README.md                # 本文档
-```
-
-## 🚀 部署步骤
-
-### 1. Fork / 推到自己的 GitHub 仓库
-
-```bash
-git init
-git add .
-git commit -m "gaming4free renew"
-git branch -M main
-git remote add origin https://github.com/<你的用户名>/<仓库名>.git
-git push -u origin main
-```
-
-### 2. 配置仓库 Secrets
-
-进入仓库 → `Settings` → `Secrets and variables` → `Actions` → `New repository secret`：
-
-| Secret 名 | 必填 | 说明 |
-|---|---|---|
-| `MC_USERNAME`   | ✅ | Minecraft 用户名 |
-| `MC_PASSWORD`   | ⚠️ | 密码（如站点需要登录才填） |
-| `GF_SITE_URL`   | ✅ | 续期页面完整 URL，如 `https://gaming4free.zapto.org/` |
-| `GF_LOGIN_URL`  | ❌ | 独立登录页 URL，没有则留空 |
-| `GF_COOKIE`     | ❌ | 备用：浏览器 F12 复制 cookie 字符串 |
-| `TG_BOT_TOKEN`  | ❌ | Telegram bot token（要通知才填） |
-| `TG_CHAT_ID`    | ❌ | Telegram chat id |
-
-### 3. 手动触发首次测试
-
-`Actions` → `gaming4free renew` → `Run workflow`
-
-跑完后下载 `screenshots-*` artifact 看截图，确认是否成功。
-
-### 4. 自动续期
-
-工作流默认 `cron: "13 */2 * * *"`（每 2 小时跑一次）。
-- gaming4free 上限 48 小时
-- 2 小时跑一次足够保险
-- 想改频率自己改 cron 表达式即可
-
-## 🔧 调试技巧
-
-### Q: 第一次跑没找到续期按钮？
-
-打开 `screenshots-*.png` 看页面长啥样，然后改 `renew.py` 里的 `click_renew_button()` 选择器：
-
-```python
-candidates = [
-    'button:contains("Renew")',   # ← 改成你站点的按钮文字
-    'button:contains("Extend")',
-    ...
-]
-```
-
-### Q: 续期按钮点到了但时间没增加？
-
-1. 看 `screenshots/fail_*.png` 是否出现 Turnstile
-2. 如果有 Turnstile 但没过，把 `TURNSTILE_WAIT` 从 90 改到 180
-3. 如果不是 Turnstile 是别的验证码（reCAPTCHA / hCaptcha），需要另外处理
-
-### Q: 怎么看续期日志？
-
-下载 `renew-log-*` artifact，里面有完整运行日志。
-
-### Q: GHA 跑太慢？
-
-每个 cron 触发后约 3-5 分钟才开始跑（GitHub 排队），属正常现象。如果想精确控制时间，把 cron 改成 `13 0,2,4,6,8,10,12,14,16,18,20,22 * * *`。
-
-## ⚠️ 注意事项
-
-1. **GitHub Actions 免费额度**：公开仓库无限，私有仓库每月 2000 分钟。本项目每次跑约 10-15 分钟，每天 12 次 ≈ 3600 分钟/月，**请用公开仓库**。
-2. **WARP 注册**：每次跑都是新 WARP 实例，需要重新注册，约 5-10 秒。
-3. **不要滥用**：单次运行 `MAX_CLICKS=30`，跑满 48h 会自动停。
-4. **失败截图保留 7 天**：超过自动删除。
-
-## 📞 故障排查
-
-| 现象 | 原因 | 解决 |
-|---|---|---|
-| `WARP 端口 40000 不可达` | WARP 客户端没起来 | 重跑 workflow；或检查 workflow yaml 第 1 步 |
-| `未找到续期按钮` | 站点结构变了 / 登录没成功 | 看 screenshot，调整选择器或登录逻辑 |
-| `Turnstile 90s 未通过` | WARP IP 也偶尔被识别 | 多跑几次；或把 `TURNSTILE_WAIT` 加大 |
-| `时间未增加` | 假成功 | 脚本已自带时间对比，会自动重试一次 |
-
-## 📈 跟 VPS 方案怎么选？
-
-- **只用 gaming4free** → 用这个 GHA 方案，免费
-- **还要 host2play / katabump** → VPS 后端跑那俩（link 模式无盾），GHA 跑 gaming4free
-- **两套并存也行** → VPS 面板里把 gaming4free 任务禁用，让 GHA 接管
-
----
-
-## 🔌 跟 VPS 后端共存（重要）
-
-如果你已经在 VPS 上跑了 checkin-new-panel 后端，**强烈建议把 gaming4free 任务在 VPS 面板里禁用**，让 GHA 接管 gaming4free。否则两套同时跑会冲突：
-
-- VPS 那边因为 IP 在 CF 黑名单，每次都会失败（30 次重试就锁 1 小时）
-- GHA 这边用 WARP IP 能稳定通过
-- 两套并发会让 gaming4free 看到异常流量，可能临时封号
-
-### VPS 后端禁用 gaming4free 任务的操作
-
-#### 方法 A：通过面板 UI（推荐）
-
-1. 打开 `https://你的面板域名/`
-2. 找到 `gaming4free` 那条任务
-3. 点击编辑（✏️ 图标）
-4. 把 **`enabled`** 字段改成 `false`（或者直接删除该任务）
-5. 保存
-
-#### 方法 B：通过 API（命令行）
-
-```bash
-# 1. 查所有任务，找到 gaming4free 的 id
-curl -s https://你的后端域名/trpc/task.getAll | python3 -m json.tool
-
-# 2. 假设 gaming4free 任务的 id=1，禁用它
-curl -X POST https://你的后端域名/trpc/task.update \
-  -H "Content-Type: application/json" \
-  -d '{"id":1,"data":{"enabled":false}}'
-```
-
-#### 方法 C：直接改数据库（终极方案）
-
-```bash
-mysql -h <DB_HOST> -u <DB_USER> -p <DB_NAME> -e \
-  "UPDATE tasks SET enabled=0 WHERE name LIKE '%gaming4free%';"
-```
-
-### 验证禁用成功
-
-VPS 面板里 gaming4free 那条任务的"上次运行"时间应该不再更新。GHA 这边的运行记录可以在 GitHub 仓库 → `Actions` → `gaming4free renew` 看到。
-
-### 后续如果 GHA 出问题想回滚
-
-1. 把 GHA workflow 的 cron 注释掉（或删 `.github/workflows/gaming4free.yml`）
-2. VPS 面板里把 gaming4free 任务 `enabled` 改回 `true`
-3. 重启 VPS 后端 `pm2 restart checkin-api`
-
----
-
-## 📁 仓库内文件位置
-
-如果你正在阅读本仓库的源码：
-
-```
 checkin-new-panel/
 ├── .github/workflows/
-│   └── gaming4free.yml         # ← GHA 工作流（必须放在仓库根的 .github/workflows/）
+│   └── gaming4free.yml      # GitHub Actions 工作流（多账号 matrix）
 ├── gaming4free-renew/
-│   ├── renew.py                # ← 续期脚本
-│   ├── requirements.txt        # ← Python 依赖
-│   └── README.md               # ← 本文档
-├── server/                     # ← VPS 后端代码（host2play / katabump 用）
-├── client/                     # ← Cloudflare Pages 前端代码
-└── README.md                   # ← 项目总说明
+│   ├── renew.py             # 续期主脚本
+│   ├── requirements.txt     # Python 依赖
+│   └── README.md            # 本文档
 ```
 
-> 注意：workflow yaml **必须放在仓库根目录的 `.github/workflows/`**，放在 `gaming4free-renew/.github/workflows/` 是不会触发的。本仓库已正确放置。
+---
+
+## 🚀 部署步骤（别人 fork 后照着做）
+
+### 第 1 步：Fork 仓库
+
+1. 访问 https://github.com/weikkadd/checkin-new-panel
+2. 点右上角 **`Fork`** 按钮
+3. 选择你的账号，fork 到自己的仓库
+
+> ⚠️ **必须用公开仓库**（Public），私有仓库 GHA 每月只有 2000 分钟，不够用。
+
+### 第 2 步：启用 GitHub Actions
+
+1. 进入你 fork 的仓库
+2. 点顶部 **`Actions`** tab
+3. 如果提示 "Workflows aren't being run on this forked repository"，点 **`I understand my workflows, go ahead and enable them`**
+
+### 第 3 步：配置 Secrets
+
+进入你的仓库 → `Settings` → `Secrets and variables` → `Actions` → `New repository secret`
+
+#### 账号 1（必填）
+
+| Secret 名 | 说明 | 怎么获取 |
+|---|---|---|
+| `MC_USERNAME` | gaming4free 用户名 | 你登录用的用户名 |
+| `GF_COOKIE` | gaming4free 的 cookie | 浏览器 F12 → Application → Cookies 复制 |
+| `GF_SITE_URL` | 服务器控制台 URL | 登录后浏览器地址栏的 URL |
+| `MC_PASSWORD` | 密码（可选） | 你的登录密码 |
+
+#### 账号 2（可选，多账号）
+
+| Secret 名 | 说明 |
+|---|---|
+| `MC_USERNAME_2` | 账号2 用户名 |
+| `GF_COOKIE_2` | 账号2 的 cookie |
+| `GF_SITE_URL_2` | 账号2 的服务器 URL |
+| `MC_PASSWORD_2` | 账号2 密码（可选） |
+
+#### 账号 3（可选）
+
+| Secret 名 | 说明 |
+|---|---|
+| `MC_USERNAME_3` | 账号3 用户名 |
+| `GF_COOKIE_3` | 账号3 的 cookie |
+| `GF_SITE_URL_3` | 账号3 的服务器 URL |
+| `MC_PASSWORD_3` | 账号3 密码（可选） |
+
+#### TG 通知（可选，但推荐）
+
+| Secret 名 | 说明 | 怎么获取 |
+|---|---|---|
+| `TG_BOT_TOKEN` | Telegram Bot Token | 找 @BotFather 创建 Bot |
+| `TG_CHAT_ID` | 群组/用户 Chat ID | 给 Bot 发消息后访问 getUpdates 获取 |
+
+### 第 4 步：获取 Cookie（关键步骤）
+
+#### 4.1 登录 gaming4free
+
+1. 浏览器打开 `https://control.gaming4free.net/`
+2. 用 Google 登录到能看到 `+90 min` 按钮的页面
+
+#### 4.2 复制 Cookie
+
+**方法 A：浏览器开发者工具**
+
+1. 按 **F12** 打开开发者工具
+2. 切换到 **`Application`**（Chrome/Edge）或 **`存储`**（Firefox）
+3. 左侧 **`Cookies`** → `https://control.gaming4free.net`
+4. 把所有 cookie 按 `Name=Value; ` 格式拼接
+
+**方法 B：Cookie-Editor 插件（推荐）**
+
+- Chrome: https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhfbcdfbcgmoabcnib
+- Firefox: https://addons.mozilla.org/firefox/addon/cookie-editor/
+
+装好后：
+1. 在 gaming4free 页面点插件图标
+2. 点 **`Export`** → **`Header String`**
+3. 自动复制到剪贴板
+
+#### 4.3 填到 GitHub Secret
+
+- Name: `GF_COOKIE`
+- Secret: 粘贴上面的 cookie 字符串
+
+### 第 5 步：手动触发测试
+
+1. 进入你 fork 的仓库 → `Actions` tab
+2. 左侧选 **`gaming4free 自动续期`**
+3. 点 **`Run workflow`** → 选 `main` 分支 → 点绿色按钮
+4. 等待 5-15 分钟
+5. 点进运行详情，下载 `screenshots-*` artifact 看截图
+
+### 第 6 步：自动续期
+
+workflow 默认 `cron: "13 */2 * * *"`（每 2 小时跑一次）。
+
+想改频率？编辑 `.github/workflows/gaming4free.yml`：
+
+```yaml
+schedule:
+  - cron: "13 */2 * * *"   # 每 2 小时（默认）
+  # - cron: "13 */4 * * *" # 每 4 小时（省 GHA 分钟）
+  # - cron: "13 */6 * * *" # 每 6 小时
+```
+
+---
+
+## 📱 TG 通知示例
+
+跑起来后你会收到这些通知（北京时间）：
+
+```
+🎮 gaming4free [账号1]
+🚀 续期启动
+⏰ 2026-07-07 16:35:25 (北京时间)
+👤 用户: your_username
+🌐 WARP: 已就绪
+
+🎮 gaming4free [账号1]
+📊 当前剩余时间
+⏳ 25h 32m
+🎯 上限: 46h
+
+🎮 gaming4free [账号1]
+✅ 续期成功 #1
+⏰ 16:40:25 (北京)
+⏳ 剩余: 25h 32m → 27h 1m
+➕ 增加: 1h 29m
+📊 累计: 1 次
+
+🎮 gaming4free [账号1]
+🏁 续期完成
+⏰ 2026-07-07 17:10:00 (北京时间)
+✅ 成功点击: 8 次
+⏳ 最终剩余: 33h 30m
+🎯 上限: 46h
+```
+
+---
+
+## 🔧 配置参数
+
+编辑 `gaming4free-renew/renew.py` 顶部：
+
+```python
+MAX_HOURS      = 46    # 续期上限 46 小时（gaming4free cap 48h，留 2h 缓冲）
+ADD_MINUTES    = 90    # 每次点击 +90 分钟
+COOLDOWN_SEC   = 285   # 冷却 4 分 45 秒
+MAX_CLICKS     = 30    # 单次运行最大点击次数
+```
+
+---
+
+## 🐛 故障排查
+
+### 问题 1：Cookie 失效
+
+**症状**：日志显示 `⚠️ cookie 注入后仍是登录页`
+
+**解决**：重新复制 cookie 更新 `GF_COOKIE` Secret（cookie 有效期一般 7-30 天）
+
+### 问题 2：找不到续期按钮
+
+**症状**：日志显示 `❌ rt-btn-free 按钮不存在`
+
+**解决**：
+1. 下载 `screenshots-*` artifact 看截图
+2. 确认 `GF_SITE_URL` 是服务器控制台 URL（不是登录页）
+3. 正确格式：`https://control.gaming4free.net/server/xxx/console`
+
+### 问题 3：Turnstile 过不了
+
+**症状**：日志显示 `⚠️ Turnstile 90s 未通过`
+
+**解决**：
+- WARP IP 偶尔被识别，多重跑几次
+- 或加大 `TURNSTILE_WAIT`（renew.py 第 40 行）
+
+### 问题 4：续期失败率高
+
+**症状**：`⚠️ 时间未增加，判定失败`
+
+**解决**：
+- 这是正常现象（成功率约 50-70%）
+- cron 每 2h 跑一次，完全够维持 46h 上限
+- 不用担心，会自动重试
+
+### 问题 5：GHA 超时
+
+**症状**：`Error: The operation was canceled`
+
+**解决**：
+- workflow 已设置 `timeout-minutes: 120`
+- 如果还超时，降低 `MAX_CLICKS` 或减少账号数
+
+---
+
+## ❓ 常见问题
+
+### Q: 必须用公开仓库吗？
+
+**A**: 是的。私有仓库 GHA 每月只有 2000 分钟，3 账号每 2h 跑约需 3600 分钟/月，不够用。公开仓库无限。
+
+### Q: Cookie 多久过期？
+
+**A**: 一般 7-30 天。建议每周更新一次。如果 TG 通知收到 `cookie 注入后仍是登录页`，就需要更新。
+
+### Q: 可以加更多账号吗？
+
+**A**: 可以。编辑 `.github/workflows/gaming4free.yml`：
+```yaml
+matrix:
+  account: [1, 2, 3, 4, 5]  # 加到 5 个账号
+```
+然后添加对应的 `MC_USERNAME_4`、`GF_COOKIE_4` 等 Secret。
+
+### Q: 会封号吗？
+
+**A**: 不会。gaming4free 的 +90 min 按钮就是给用户点的，每 5 分钟点一次是正常使用频率。
+
+### Q: GHA 会不会跑着跑着停了？
+
+**A**: 不会。脚本有自动恢复机制，异常自动重启最多 2 次。
+
+---
+
+## 📞 技术支持
+
+- 问题反馈：https://github.com/weikkadd/checkin-new-panel/issues
+- 查看日志：仓库 → Actions → 点最新运行 → `运行续期脚本` 步骤
+- 下载截图：运行详情页底部 → `screenshots-*` artifact
+
+## 📄 License
+
+MIT
