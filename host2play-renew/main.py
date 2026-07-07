@@ -464,8 +464,9 @@ def run():
     co.set_argument('--disable-gpu')
     co.set_argument('--lang=en-US')
     co.set_argument('--user-agent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36')
-    # WARP 代理
-    co.set_proxy(WARP_PROXY)
+    # WARP 代理（DrissionPage 不支持 socks5，用 Chrome --proxy-server 参数）
+    # Chrome 原生支持 socks5 代理
+    co.set_argument(f'--proxy-server={WARP_PROXY}')
 
     page = ChromiumPage(co)
     page.set.timeouts(PAGE_TIMEOUT)
