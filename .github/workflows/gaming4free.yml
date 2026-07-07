@@ -150,12 +150,13 @@ jobs:
         env:
           # 账号标识（用于 TG 通知区分）
           GF_ACCOUNT_ID: ${{ matrix.account }}
-          # 动态读取对应账号的 Secret
-          MC_USERNAME:  ${{ secrets[format('MC_USERNAME_{0}', matrix.account)] }}
-          MC_PASSWORD:  ${{ secrets[format('MC_PASSWORD_{0}', matrix.account)] }}
-          GF_SITE_URL:  ${{ secrets[format('GF_SITE_URL_{0}', matrix.account)] }}
-          GF_LOGIN_URL: ${{ secrets[format('GF_LOGIN_URL_{0}', matrix.account)] }}
-          GF_COOKIE:    ${{ secrets[format('GF_COOKIE_{0}', matrix.account)] }}
+          # 账号1 用原名（不带后缀），账号2/3 用 _N 后缀
+          # matrix.account == 1 时读 MC_USERNAME，否则读 MC_USERNAME_2/3
+          MC_USERNAME:  ${{ matrix.account == 1 && secrets.MC_USERNAME || secrets[format('MC_USERNAME_{0}', matrix.account)] }}
+          MC_PASSWORD:  ${{ matrix.account == 1 && secrets.MC_PASSWORD || secrets[format('MC_PASSWORD_{0}', matrix.account)] }}
+          GF_SITE_URL:  ${{ matrix.account == 1 && secrets.GF_SITE_URL || secrets[format('GF_SITE_URL_{0}', matrix.account)] }}
+          GF_LOGIN_URL: ${{ matrix.account == 1 && secrets.GF_LOGIN_URL || secrets[format('GF_LOGIN_URL_{0}', matrix.account)] }}
+          GF_COOKIE:    ${{ matrix.account == 1 && secrets.GF_COOKIE || secrets[format('GF_COOKIE_{0}', matrix.account)] }}
           # 通用 Secret（所有账号共用）
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID:   ${{ secrets.TG_CHAT_ID }}
@@ -164,11 +165,11 @@ jobs:
           echo "🔄 开始处理账号 ${{ matrix.account }}"
           # 检查 Secret 是否配置
           if [ -z "$MC_USERNAME" ]; then
-            echo "⚠️ 账号 ${{ matrix.account }} 未配置 MC_USERNAME_${{ matrix.account }}，跳过"
+            echo "⚠️ 账号 ${{ matrix.account }} 未配置用户名 Secret，跳过"
             exit 0
           fi
           if [ -z "$GF_COOKIE" ]; then
-            echo "⚠️ 账号 ${{ matrix.account }} 未配置 GF_COOKIE_${{ matrix.account }}，跳过"
+            echo "⚠️ 账号 ${{ matrix.account }} 未配置 cookie Secret，跳过"
             exit 0
           fi
           mkdir -p screenshots
