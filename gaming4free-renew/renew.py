@@ -41,6 +41,8 @@ TURNSTILE_WAIT = 90            # Turnstile 等待上限
 
 TG_TOKEN       = os.getenv("TG_BOT_TOKEN", "")
 TG_CHAT_ID     = os.getenv("TG_CHAT_ID", "")
+# 账号标识（多账号时用于 TG 通知区分，如 "1" / "2" / "3"）
+ACCOUNT_ID     = os.getenv("GF_ACCOUNT_ID", "")
 
 SHOT_DIR       = Path("screenshots")
 SHOT_DIR.mkdir(exist_ok=True)
@@ -71,7 +73,11 @@ def tg(msg: str, silent: bool = False):
         silent: 是否静默发送（无通知音）
     """
     # 自动在消息开头加上 gaming4free 标识（如果还没有的话）
-    prefix = "🎮 <b>gaming4free</b>\n"
+    # 多账号时带上账号编号，方便区分
+    if ACCOUNT_ID:
+        prefix = f"🎮 <b>gaming4free [账号{ACCOUNT_ID}]</b>\n"
+    else:
+        prefix = "🎮 <b>gaming4free</b>\n"
     if "gaming4free" not in msg.lower():
         msg = prefix + msg
 
@@ -888,7 +894,10 @@ def run():
     from seleniumbase import SB
 
     log.info("=" * 60)
-    log.info("gaming4free 续期启动")
+    if ACCOUNT_ID:
+        log.info(f"gaming4free 续期启动 (账号 {ACCOUNT_ID})")
+    else:
+        log.info("gaming4free 续期启动")
     log.info(f"WARP 代理: {WARP_PROXY}")
     log.info(f"目标站点: {SITE_URL}")
     log.info(f"MC 用户:  {USERNAME or '(未配置)'}")

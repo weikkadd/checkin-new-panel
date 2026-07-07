@@ -1,4 +1,4 @@
-name: gaming4free 自动续期 (WARP + Python)
+name: gaming4free 自动续期 (WARP + Python, 多账号)
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
     # gaming4free 上限 48h，2h 一次足够保险
     - cron: "13 */2 * * *"
 
-# 同一时刻只允许一个续期任务跑
+# 同一时刻只允许一个续期任务跑（所有账号串行）
 concurrency:
   group: gaming4free-renew
   cancel-in-progress: false
@@ -17,9 +17,16 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
+
+    strategy:
+      # 3 个账号，串行跑（避免同时登录互相挤掉）
+      matrix:
+        account: [1, 2, 3]
+      max-parallel: 1
+      fail-fast: false
 
     steps:
       - name: 检出代码
@@ -137,39 +144,53 @@ jobs:
           sbase install chromium
 
       # =========================
-      # 🟡 4. 运行续期脚本
+      # 🟡 4. 运行续期脚本（账号 ${{ matrix.account }}）
       # =========================
-      - name: 运行续期脚本
+      - name: 运行续期脚本 (账号 ${{ matrix.account }})
         env:
-          MC_USERNAME:  ${{ secrets.MC_USERNAME }}
-          MC_PASSWORD:  ${{ secrets.MC_PASSWORD }}
-          GF_SITE_URL:  ${{ secrets.GF_SITE_URL }}
-          GF_LOGIN_URL: ${{ secrets.GF_LOGIN_URL }}
-          GF_COOKIE:    ${{ secrets.GF_COOKIE }}
+          # 账号标识（用于 TG 通知区分）
+          GF_ACCOUNT_ID: ${{ matrix.account }}
+          # 动态读取对应账号的 Secret
+          MC_USERNAME:  ${{ secrets[format('MC_USERNAME_{0}', matrix.account)] }}
+          MC_PASSWORD:  ${{ secrets[format('MC_PASSWORD_{0}', matrix.account)] }}
+          GF_SITE_URL:  ${{ secrets[format('GF_SITE_URL_{0}', matrix.account)] }}
+          GF_LOGIN_URL: ${{ secrets[format('GF_LOGIN_URL_{0}', matrix.account)] }}
+          GF_COOKIE:    ${{ secrets[format('GF_COOKIE_{0}', matrix.account)] }}
+          # 通用 Secret（所有账号共用）
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID:   ${{ secrets.TG_CHAT_ID }}
         working-directory: gaming4free-renew
         run: |
+          echo "🔄 开始处理账号 ${{ matrix.account }}"
+          # 检查 Secret 是否配置
+          if [ -z "$MC_USERNAME" ]; then
+            echo "⚠️ 账号 ${{ matrix.account }} 未配置 MC_USERNAME_${{ matrix.account }}，跳过"
+            exit 0
+          fi
+          if [ -z "$GF_COOKIE" ]; then
+            echo "⚠️ 账号 ${{ matrix.account }} 未配置 GF_COOKIE_${{ matrix.account }}，跳过"
+            exit 0
+          fi
           mkdir -p screenshots
           xvfb-run -a --server-args="-screen 0 1280x800x24" python renew.py
 
       # =========================
       # 🟡 5. 上传截图 + 日志（失败也上传）
       # =========================
-      - name: 上传截图
+      - name: 上传截图 (账号 ${{ matrix.account }})
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: screenshots-${{ github.run_id }}
+          name: screenshots-account${{ matrix.account }}-${{ github.run_id }}
           path: gaming4free-renew/screenshots/**
           if-no-files-found: warn
           retention-days: 7
 
-      - name: 上传日志
+      - name: 上传日志 (账号 ${{ matrix.account }})
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: renew-log-${{ github.run_id }}
+          name: renew-log-account${{ matrix.account }}-${{ github.run_id }}
           path: gaming4free-renew/renew.log
           if-no-files-found: warn
           retention-days: 7
