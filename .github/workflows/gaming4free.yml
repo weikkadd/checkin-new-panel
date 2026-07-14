@@ -35,14 +35,15 @@ jobs:
           pip install seleniumbase
           seleniumbase install chromedriver
 
-      - name: 🛡️ 启用 WARP 网络 (proxy 模式)
+      - name: 🛡️ 启用 WARP 网络
         uses: fscarmen/warp-on-actions@v1.3
         with:
           stack: dual
-          mode: proxy
+          mode: client
 
-      - name: 🔧 验证 WARP 连接
+      - name: 🔧 切换 WARP 为 proxy 模式 + 验证
         run: |
+          sudo warp-cli --accept-tos mode proxy
           sleep 3
           echo "[INFO] WARP SOCKS5 代理测试:"
           curl -x socks5://127.0.0.1:40000 -s --max-time 10 https://api.ipify.org && echo
