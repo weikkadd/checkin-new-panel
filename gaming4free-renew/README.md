@@ -73,16 +73,21 @@ checkin-gaming4/
 - `http://host:port`
 - `http://user:pass@host:port`
 
-#### `TG_BOT`（可选，推荐）
+#### `TG_BOT_TOKEN`（可选，推荐）
 
-格式：`chat_id,bot_token`（逗号分隔，没有空格）
+Telegram Bot Token，从 @BotFather 获取。
 
 ```
-123456789,7890123456:ABCdefGHIjklMNOpqrsTUVwxyz
+7890123456:ABCdefGHIjklMNOpqrsTUVwxyz
 ```
 
-- `chat_id` = 你的 Telegram Chat ID
-- `bot_token` = 你的 Telegram Bot Token
+#### `TG_CHAT_ID`（可选，推荐）
+
+Telegram Chat ID。
+
+```
+123456789
+```
 
 ### 第 4 步：手动触发测试
 

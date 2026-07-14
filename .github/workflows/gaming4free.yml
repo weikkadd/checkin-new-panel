@@ -47,7 +47,8 @@ jobs:
       - name: 🚀 运行续期脚本
         env:
           PYTHONIOENCODING: utf-8
-          TG_BOT: ${{ secrets.TG_BOT }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           GAME4FREE_ACCOUNT: ${{ secrets.GAME4FREE_ACCOUNT }}
           GAME4FREE_PROXY: ${{ secrets.GAME4FREE_PROXY }}
         working-directory: gaming4free-renew

@@ -57,9 +57,8 @@ def stop_gost():
 
 LOCAL_PROXY = "http://127.0.0.1:8080"
 
-_tg = os.environ["TG_BOT"].split(",")
-TG_CHAT_ID = _tg[0].strip()
-TG_TOKEN   = _tg[1].strip()
+TG_CHAT_ID = os.environ.get("TG_CHAT_ID", "").strip()
+TG_TOKEN   = os.environ.get("TG_BOT_TOKEN", "").strip()
 
 raw_accounts = os.environ["GAME4FREE_ACCOUNT"].strip().splitlines()
 ACCOUNTS = []
