@@ -132,55 +132,44 @@ def get_remaining_time(sb):
 
 def click_plus_90(sb):
     """点击 +90 min 按钮"""
-    # 直接用 JS 找到包含 '90 min' 的元素, 然后向上找可点击的父元素
+    # 用 SeleniumBase 原生方法找 span 文字 + 点击父元素
     try:
-        result = sb.execute_script("""
-            (function() {
-                var allEls = document.querySelectorAll('*');
-                for (var i = 0; i < allEls.length; i++) {
-                    var el = allEls[i];
-                    var text = (el.innerText || '').trim();
-                    if (text === '+ 90 min' || text === '+90 min') {
-                        var info = {
-                            tag: el.tagName,
-                            parentTag: el.parentElement ? el.parentElement.tagName : 'none',
-                            parentClass: el.parentElement ? el.parentElement.className.substring(0, 100) : ''
-                        };
-                        var clickTarget = el;
-                        for (var j = 0; j < 10; j++) {
-                            if (!clickTarget) break;
-                            var tag = clickTarget.tagName;
-                            if (tag === 'A' || tag === 'BUTTON' ||
-                                clickTarget.getAttribute('role') === 'button' ||
-                                clickTarget.onclick ||
-                                (clickTarget.className && clickTarget.className.includes('btn'))) {
-                                clickTarget.scrollIntoView({block: 'center'});
-                                clickTarget.click();
-                                info.clicked = true;
-                                info.clickedTag = clickTarget.tagName;
-                                info.clickedClass = clickTarget.className.substring(0, 100);
-                                return info;
-                            }
-                            clickTarget = clickTarget.parentElement;
-                        }
-                        el.scrollIntoView({block: 'center'});
-                        el.click();
-                        info.clicked = true;
-                        info.clickedTag = el.tagName;
-                        return info;
-                    }
-                }
-                return {clicked: false};
-            })();
-        """)
+        # 找所有 span, 检查文字
+        spans = sb.find_elements("span")
+        for span in spans:
+            try:
+                text = span.text.strip()
+                if text == "+ 90 min" or text == "+90 min":
+                    log(f"✅ 找到 +90 min (span)")
+                    # 点击 span 的父元素
+                    parent = span.find_element("xpath", "..")
+                    parent_tag = parent.tag_name
+                    log(f"📋 父元素: {parent_tag}")
+                    # 滚动到可见
+                    sb.execute_script("arguments[0].scrollIntoView({block: 'center'});", parent)
+                    time.sleep(0.5)
+                    # 点击
+                    parent.click()
+                    log(f"✅ 已点击 +90 min (父元素: {parent_tag})")
+                    return True
+            except:
+                continue
 
-        if result and result.get('clicked'):
-            log(f"✅ 已点击 +90 min (点击了 {result.get('clickedTag', '?')} 元素)")
-            log(f"📋 按钮信息: {result.get('tag', '?')} → 父: {result.get('parentTag', '?')}")
-            return True
-        else:
-            log(f"❌ JS 搜索未找到 '90 min' 元素")
-            return False
+        # 也试 a 标签
+        links = sb.find_elements("a")
+        for link in links:
+            try:
+                text = link.text.strip()
+                if "+ 90 min" in text or "+90 min" in text:
+                    log(f"✅ 找到 +90 min (a 标签)")
+                    link.click()
+                    log(f"✅ 已点击 +90 min")
+                    return True
+            except:
+                continue
+
+        log("❌ 未找到 +90 min 按钮")
+        return False
     except Exception as e:
         log(f"❌ 点击异常: {e}")
         return False
