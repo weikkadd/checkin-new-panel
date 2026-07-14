@@ -194,8 +194,21 @@ def renew_account(sb, server_name, renew_url):
     """续期单台服务器"""
     log(f"\n🎮 开始续期: {server_name}")
 
-    # 从 URL 提取 slug
-    slug = renew_url.rstrip('/').split('/')[-1]
+    # 从 URL 提取 slug (兼容多种格式)
+    # https://gaming4free.net/servers/247d3700 → 247d3700
+    # https://control.gaming4free.net/server/247d3700/console → 247d3700
+    # https://control.gaming4free.net/server/247d3700 → 247d3700
+    parts = renew_url.rstrip('/').split('/')
+    slug = None
+    for part in reversed(parts):
+        if part and part not in ('console', 'console', 'servers', 'server', 'vote', 'settings'):
+            # 看起来像 slug (字母数字组合)
+            if len(part) >= 4 and part.replace('-', '').isalnum():
+                slug = part
+                break
+    if not slug:
+        slug = parts[-1] if parts else ''
+    log(f"📌 服务器 slug: {slug}")
 
     # 打开 console 页面
     console_url = f"https://control.gaming4free.net/server/{slug}/console"
