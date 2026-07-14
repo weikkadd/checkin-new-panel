@@ -336,18 +336,52 @@ def renew_account(sb, server_name, renew_url):
 
     if not vote_clicked:
         log("❌ VOTE 按钮未找到")
-        # 打印页面所有按钮文字, 帮助诊断
-        try:
-            btns = sb.execute_script("""
-                return Array.from(document.querySelectorAll('button, a')).map(b => b.innerText.trim()).filter(t => t.length > 0 && t.length < 50);
-            """)
-            log(f"📋 页面所有按钮: {btns}")
-        except:
-            pass
         clear_cache(sb)
         return ''
 
-    time.sleep(1)
+    # 等待弹窗出现
+    time.sleep(3)
+    log("⏳ 等待投票弹窗...")
+
+    # 检查弹窗是否出现 (查找弹窗内的文字或元素)
+    popup_found = False
+    for _ in range(10):
+        try:
+            page_text = sb.execute_script("return document.body ? document.body.innerText : '';")
+            if page_text and ("VOTE FOR SERVER" in page_text or "YOUR IGN" in page_text or
+                               "ADDS 90 MIN" in page_text or "VOTE –" in page_text):
+                log("✅ 投票弹窗已出现")
+                popup_found = True
+                break
+            # 也检查 modal/dialog 元素
+            has_modal = sb.execute_script("""
+                return document.querySelector('[class*="modal"], [class*="dialog"], [class*="popup"], [role="dialog"]') !== null;
+            """)
+            if has_modal:
+                log("✅ 检测到 modal/dialog 元素")
+                popup_found = True
+                break
+        except:
+            pass
+        time.sleep(1)
+
+    if not popup_found:
+        log("⚠️ 投票弹窗未出现, 尝试再次点击 VOTE...")
+        try:
+            sb.click('#sd-vote-btn')
+            time.sleep(3)
+        except:
+            pass
+
+    time.sleep(2)  # 等弹窗完全渲染
+
+    # 检查 Turnstile 是否在弹窗里, 或者已经显示「成功」
+    try:
+        page_text = sb.execute_script("return document.body ? document.body.innerText : '';")
+        if page_text:
+            log(f"📋 页面文本 (前200): {page_text[:200]}")
+    except:
+        pass
 
     # 等待 Turnstile
     for attempt in range(3):
