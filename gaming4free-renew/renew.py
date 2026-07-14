@@ -236,6 +236,27 @@ def solve_turnstile(sb):
                 time.sleep(0.1)
 
     log("❌ 人机验证超时")
+
+    # 失败时截图 + 诊断页面
+    try:
+        sb.save_screenshot("captcha_fail.png")
+        log(f"📸 截图已保存: captcha_fail.png")
+        title = sb.get_title() or ""
+        url = sb.get_current_url() or ""
+        log(f"📋 页面标题: {title}")
+        log(f"📋 当前 URL: {url}")
+        # 打印 iframe 数量
+        iframe_count = sb.execute_script("return document.querySelectorAll('iframe').length;")
+        log(f"📋 iframe 数量: {iframe_count}")
+        # 打印页面文本前 500 字符
+        page_text = sb.execute_script("return document.body ? document.body.innerText.substring(0, 500) : '';")
+        log(f"📋 页面文本: {page_text[:300]}")
+        # 打印所有 iframe 的 src
+        iframe_srcs = sb.execute_script("return Array.from(document.querySelectorAll('iframe')).map(f => f.src || f.getAttribute('src') || '(no src)').slice(0, 5);")
+        log(f"📋 iframe src: {iframe_srcs}")
+    except Exception as e:
+        log(f"⚠️ 诊断失败: {e}")
+
     return False
 
 # ================== 投票 API ==================
@@ -416,7 +437,8 @@ def run_script():
         final_tg = {}
 
         round_num = 0
-        while any(remaining[name] + 90 * 60 <= TARGET_SECONDS for name, _ in ACCOUNTS):
+        max_rounds = 3  # 最多 3 轮, 避免浪费 GHA 时间
+        while any(remaining[name] + 90 * 60 <= TARGET_SECONDS for name, _ in ACCOUNTS) and round_num < max_rounds:
             round_num += 1
             log(f"\n{'='*50}")
             log(f"🔄 第 {round_num} 轮续期")
