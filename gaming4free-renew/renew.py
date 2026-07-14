@@ -133,16 +133,17 @@ def get_remaining_time(sb):
 def click_plus_90(sb):
     """点击 +90 min 按钮"""
     selectors = [
+        'button:has-text("+ 90")',
         'button:has-text("+90")',
         'button:has-text("90 min")',
-        'button:has-text("+ 90")',
         'button:has-text("90min")',
+        'a:has-text("+ 90")',
         'a:has-text("+90")',
         'a:has-text("90 min")',
         '[class*="extend"]',
         '[class*="renew"]',
         '[class*="add-time"]',
-        '[class*="plus-90"]',
+        '[class*="plus"]',
         '[id*="extend"]',
         '[id*="renew"]',
     ]
