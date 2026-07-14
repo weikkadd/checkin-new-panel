@@ -1,13 +1,14 @@
 name: gaming4free 自动续期 (WARP + Python, 多账号)
 
 on:
-  push:
-    branches: [ main, master ]
   workflow_dispatch:
-  schedule:
-    # 每 2 小时跑一次（错峰避开整点拥堵）
-    # gaming4free 上限 48h，2h 一次足够保险
-    - cron: "13 */2 * * *"
+  # ⏸️ 已暂停定时任务 (需要恢复时取消下面的注释)
+  # push:
+  #   branches: [ main, master ]
+  # schedule:
+  #   # 每 2 小时跑一次（错峰避开整点拥堵）
+  #   # gaming4free 上限 48h，2h 一次足够保险
+  #   - cron: "13 */2 * * *"
 
 # 同一时刻只允许一个续期任务跑（所有账号串行）
 concurrency:
