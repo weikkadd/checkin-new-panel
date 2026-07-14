@@ -17,6 +17,7 @@ from seleniumbase import SB
 # ================== 环境变量 ==================
 TG_CHAT_ID = os.environ.get("TG_CHAT_ID", "").strip()
 TG_TOKEN   = os.environ.get("TG_BOT_TOKEN", "").strip()
+GF_COOKIE  = os.environ.get("GAME4FREE_COOKIE", "").strip()
 
 raw_accounts = os.environ.get("GAME4FREE_ACCOUNT", "").strip().splitlines()
 ACCOUNTS = []
@@ -284,6 +285,33 @@ def run_script():
     log("🔧 启动浏览器...")
     with SB(**sb_kwargs) as sb:
         log("🚀 浏览器就绪!")
+
+        # 注入 Cookie 登录
+        if GF_COOKIE:
+            log("🍪 注入 Cookie...")
+            try:
+                # 先打开 gaming4free 域名 (设置 Cookie 需要在对应域名下)
+                sb.open("https://control.gaming4free.net/")
+                time.sleep(3)
+                # 注入 Cookie
+                sb.execute_script(f"""
+                    var cookieStr = {GF_COOKIE!r};
+                    var cookies = cookieStr.split(';');
+                    cookies.forEach(function(c) {{
+                        var parts = c.trim().split('=');
+                        if (parts.length >= 2) {{
+                            var name = parts[0].trim();
+                            var value = parts.slice(1).join('=').trim();
+                            document.cookie = name + '=' + value + '; path=/; domain=.gaming4free.net';
+                        }}
+                    }});
+                """)
+                log("✅ Cookie 注入完成")
+                time.sleep(2)
+            except Exception as e:
+                log(f"⚠️ Cookie 注入异常: {e}")
+        else:
+            log("⚠️ 未配置 GAME4FREE_COOKIE, 可能无法访问 console 页面")
 
         # 验证出口 IP
         try:
