@@ -1,34 +1,24 @@
-# gaming4free 自动续期（GHA + WARP）
+# Gaming4Free 自动续期（GHA + GOST 代理 + Turnstile）
 
-> 利用 GitHub Actions + Cloudflare WARP 出口 + seleniumbase UC mode 自动续期 gaming4free 服务器。
-> 因为 WARP 是 Cloudflare 自家 IP，Turnstile 几乎必过。
-> **支持多账号**、**TG 通知**、**自动恢复**。
-
-## 🎯 原理对比
-
-| 方案 | 出口 IP | Turnstile 通过率 | 费用 |
-|---|---|---|---|
-| VPS + playwright | 机房 IP（CF 黑名单） | ❌ 0% | VPS 月费 |
-| **GHA + WARP** | CF 自家 IP | ✅ ~95% | **免费**（公开仓库） |
+> 利用 GitHub Actions + GOST 代理 + SeleniumBase UC mode 自动续期 gaming4free 服务器。
+> 通过 Turnstile 验证 + 投票 API 续期，每次 +90 分钟，上限 48 小时。
+> **支持多账号**、**多代理交替**、**TG 通知**。
 
 ## ✨ 功能特性
 
-- 🔗 **WARP 代理** — Cloudflare 自家 IP，过 Turnstile
-- 🍪 **Cookie 注入** — 支持 Google OAuth 登录的站点
-- 🖱️ **Selenium 真实点击** — 触发 wire:click + 广告播放
-- 📺 **广告智能等待** — 检测 video ended/cooldown，不固定等
-- ⏱️ **cooldown 检测** — 最可靠的成功判断
-- 👥 **多账号支持** — matrix 策略，最多 3 账号串行跑
-- 📱 **TG 通知** — 7 个通知点，北京时间，带账号标识
-- 🔄 **自动恢复** — 异常自动重启最多 2 次
-- 🛡️ **Cloudflare Turnstile 处理** — 多种点击方式
+- 🔗 **GOST 代理** — 支持多代理交替使用，避免 IP 被风控
+- 🛡️ **Cloudflare Turnstile 处理** — 坐标点击 + token 监听 + 无感盾支持
+- 📤 **投票 API 续期** — 直接调用 API 提交，成功率高
+- 👥 **多账号支持** — 多服务器批量续期
+- 🔄 **多轮续期** — 自动循环续期直到 48 小时上限
+- 📱 **TG 通知** — 统一 emoji 格式
 
 ## 📁 文件结构
 
 ```
-checkin-new-panel/
+checkin-gaming4/
 ├── .github/workflows/
-│   └── gaming4free.yml      # GitHub Actions 工作流（多账号 matrix）
+│   └── gaming4free.yml      # GitHub Actions 工作流
 ├── gaming4free-renew/
 │   ├── renew.py             # 续期主脚本
 │   ├── requirements.txt     # Python 依赖
@@ -37,143 +27,94 @@ checkin-new-panel/
 
 ---
 
-## 🚀 部署步骤（别人 fork 后照着做）
+## 🚀 部署步骤
 
-### 第 1 步：Fork 仓库
+### 第 1 步：注册新账号
 
-1. 访问 https://github.com/weikkadd/checkin-new-panel
-2. 点右上角 **`Fork`** 按钮
-3. 选择你的账号，fork 到自己的仓库
+> ⚠️ 如果之前的账号被封了，需要重新注册一个新账号。
 
-> ⚠️ **必须用公开仓库**（Public），私有仓库 GHA 每月只有 2000 分钟，不够用。
+1. 打开 https://control.gaming4free.net/
+2. 用 Google 账号登录注册
+3. 添加你的 Minecraft 服务器
+4. 进入服务器详情页
 
-### 第 2 步：启用 GitHub Actions
+### 第 2 步：获取续期 URL
 
-1. 进入你 fork 的仓库
-2. 点顶部 **`Actions`** tab
-3. 如果提示 "Workflows aren't being run on this forked repository"，点 **`I understand my workflows, go ahead and enable them`**
+1. 登录后进入你的服务器页面
+2. 找到 **Vote** 按钮
+3. 点击 Vote，复制浏览器地址栏的 URL
+4. URL 格式：`https://control.gaming4free.net/server/xxxx/vote`
 
 ### 第 3 步：配置 Secrets
 
-进入你的仓库 → `Settings` → `Secrets and variables` → `Actions` → `New repository secret`
+进入仓库 → `Settings` → `Secrets and variables` → `Actions` → `New repository secret`
 
-#### 账号 1（必填）
+#### `GAME4FREE_ACCOUNT`（必填）
 
-| Secret 名 | 说明 | 怎么获取 |
-|---|---|---|
-| `MC_USERNAME` | gaming4free 用户名 | 你登录用的用户名 |
-| `GF_COOKIE` | gaming4free 的 cookie | 浏览器 F12 → Application → Cookies 复制 |
-| `GF_SITE_URL` | 服务器控制台 URL | 登录后浏览器地址栏的 URL |
-| `MC_PASSWORD` | 密码（可选） | 你的登录密码 |
+格式：`服务器名,续期URL`（每行一个账号）
 
-#### 账号 2（可选，多账号）
+```
+我的服务器1,https://control.gaming4free.net/server/abc123/vote
+我的服务器2,https://control.gaming4free.net/server/def456/vote
+```
 
-| Secret 名 | 说明 |
-|---|---|
-| `MC_USERNAME_2` | 账号2 用户名 |
-| `GF_COOKIE_2` | 账号2 的 cookie |
-| `GF_SITE_URL_2` | 账号2 的服务器 URL |
-| `MC_PASSWORD_2` | 账号2 密码（可选） |
+#### `GAME4FREE_PROXY`（必填）
 
-#### 账号 3（可选）
+格式：`代理名,代理URL`（每行一个，建议配 2 条交替使用）
 
-| Secret 名 | 说明 |
-|---|---|
-| `MC_USERNAME_3` | 账号3 用户名 |
-| `GF_COOKIE_3` | 账号3 的 cookie |
-| `GF_SITE_URL_3` | 账号3 的服务器 URL |
-| `MC_PASSWORD_3` | 账号3 密码（可选） |
+```
+代理1,socks5://user:pass@host:port
+代理2,http://host:port
+```
 
-#### TG 通知（可选，但推荐）
+支持格式：
+- `socks5://host:port`
+- `socks5://user:pass@host:port`
+- `http://host:port`
+- `http://user:pass@host:port`
 
-| Secret 名 | 说明 | 怎么获取 |
-|---|---|---|
-| `TG_BOT_TOKEN` | Telegram Bot Token | 找 @BotFather 创建 Bot |
-| `TG_CHAT_ID` | 群组/用户 Chat ID | 给 Bot 发消息后访问 getUpdates 获取 |
+#### `TG_BOT`（可选，推荐）
 
-### 第 4 步：获取 Cookie（关键步骤）
+格式：`chat_id,bot_token`（逗号分隔，没有空格）
 
-#### 4.1 登录 gaming4free
+```
+123456789,7890123456:ABCdefGHIjklMNOpqrsTUVwxyz
+```
 
-1. 浏览器打开 `https://control.gaming4free.net/`
-2. 用 Google 登录到能看到 `+90 min` 按钮的页面
+- `chat_id` = 你的 Telegram Chat ID
+- `bot_token` = 你的 Telegram Bot Token
 
-#### 4.2 复制 Cookie
+### 第 4 步：手动触发测试
 
-**方法 A：浏览器开发者工具**
-
-1. 按 **F12** 打开开发者工具
-2. 切换到 **`Application`**（Chrome/Edge）或 **`存储`**（Firefox）
-3. 左侧 **`Cookies`** → `https://control.gaming4free.net`
-4. 把所有 cookie 按 `Name=Value; ` 格式拼接
-
-**方法 B：Cookie-Editor 插件（推荐）**
-
-- Chrome: https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhfbcdfbcgmoabcnib
-- Firefox: https://addons.mozilla.org/firefox/addon/cookie-editor/
-
-装好后：
-1. 在 gaming4free 页面点插件图标
-2. 点 **`Export`** → **`Header String`**
-3. 自动复制到剪贴板
-
-#### 4.3 填到 GitHub Secret
-
-- Name: `GF_COOKIE`
-- Secret: 粘贴上面的 cookie 字符串
-
-### 第 5 步：手动触发测试
-
-1. 进入你 fork 的仓库 → `Actions` tab
-2. 左侧选 **`gaming4free 自动续期`**
+1. 进入仓库 → `Actions` tab
+2. 左侧选 **`Game4Free-Renew`**
 3. 点 **`Run workflow`** → 选 `main` 分支 → 点绿色按钮
 4. 等待 5-15 分钟
-5. 点进运行详情，下载 `screenshots-*` artifact 看截图
+5. 点进运行详情看日志
 
-### 第 6 步：自动续期
+### 第 5 步：自动续期
 
-workflow 默认 `cron: "13 */2 * * *"`（每 2 小时跑一次）。
+workflow 默认每天 UTC 01:00 自动运行。
 
 想改频率？编辑 `.github/workflows/gaming4free.yml`：
 
 ```yaml
 schedule:
-  - cron: "13 */2 * * *"   # 每 2 小时（默认）
-  # - cron: "13 */4 * * *" # 每 4 小时（省 GHA 分钟）
-  # - cron: "13 */6 * * *" # 每 6 小时
+  - cron: "0 1 * * *"      # 每天 UTC 01:00（默认）
+  # - cron: "0 */6 * * *"  # 每 6 小时
+  # - cron: "0 */2 * * *"  # 每 2 小时
 ```
 
 ---
 
 ## 📱 TG 通知示例
 
-跑起来后你会收到这些通知（北京时间）：
-
 ```
-🎮 gaming4free [账号1]
-🚀 续期启动
-⏰ 2026-07-07 16:35:25 (北京时间)
-👤 用户: your_username
-🌐 WARP: 已就绪
-
-🎮 gaming4free [账号1]
-📊 当前剩余时间
-⏳ 25h 32m
-🎯 上限: 46h
-
-🎮 gaming4free [账号1]
-✅ 续期成功 #1
-⏰ 16:40:25 (北京)
-⏳ 剩余: 25h 32m → 27h 1m
-➕ 增加: 1h 29m
-📊 累计: 1 次
-
-🎮 gaming4free [账号1]
-🏁 续期完成
-⏰ 2026-07-07 17:10:00 (北京时间)
-✅ 成功点击: 8 次
-⏳ 最终剩余: 33h 30m
-🎯 上限: 46h
+🎮Game4Free 续期通知
+⏰运行时间: 2026-07-14 08:00:00
+🖥️服务器: 我的服务器1
+🔢利用期限: 48:00:00
+📊续期结果: ✅续期成功！
 ```
 
 ---
@@ -183,92 +124,74 @@ schedule:
 编辑 `gaming4free-renew/renew.py` 顶部：
 
 ```python
-MAX_HOURS      = 46    # 续期上限 46 小时（gaming4free cap 48h，留 2h 缓冲）
-ADD_MINUTES    = 90    # 每次点击 +90 分钟
-COOLDOWN_SEC   = 285   # 冷却 4 分 45 秒
-MAX_CLICKS     = 30    # 单次运行最大点击次数
+TARGET_SECONDS = 48 * 3600  # 48小时目标上限
 ```
 
 ---
 
 ## 🐛 故障排查
 
-### 问题 1：Cookie 失效
+### 问题 1：Turnstile 过不了
 
-**症状**：日志显示 `⚠️ cookie 注入后仍是登录页`
-
-**解决**：重新复制 cookie 更新 `GF_COOKIE` Secret（cookie 有效期一般 7-30 天）
-
-### 问题 2：找不到续期按钮
-
-**症状**：日志显示 `❌ rt-btn-free 按钮不存在`
+**症状**：日志显示 `❌ 人机验证超时`
 
 **解决**：
-1. 下载 `screenshots-*` artifact 看截图
-2. 确认 `GF_SITE_URL` 是服务器控制台 URL（不是登录页）
-3. 正确格式：`https://control.gaming4free.net/server/xxx/console`
+- 换代理 IP，住宅 IP 通过率高
+- 多跑几次，Turnstile 有随机性
 
-### 问题 3：Turnstile 过不了
+### 问题 2：续期失败率高
 
-**症状**：日志显示 `⚠️ Turnstile 90s 未通过`
-
-**解决**：
-- WARP IP 偶尔被识别，多重跑几次
-- 或加大 `TURNSTILE_WAIT`（renew.py 第 40 行）
-
-### 问题 4：续期失败率高
-
-**症状**：`⚠️ 时间未增加，判定失败`
+**症状**：`❌ 续期失败，接口提示`
 
 **解决**：
-- 这是正常现象（成功率约 50-70%）
-- cron 每 2h 跑一次，完全够维持 46h 上限
-- 不用担心，会自动重试
+- 检查续期 URL 是否正确
+- 检查代理是否能访问 gaming4free.net
+- 可能是冷却时间未到（每次续期间隔约 5 分钟）
 
-### 问题 5：GHA 超时
+### 问题 3：GHA 超时
 
 **症状**：`Error: The operation was canceled`
 
 **解决**：
-- workflow 已设置 `timeout-minutes: 120`
-- 如果还超时，降低 `MAX_CLICKS` 或减少账号数
+- 减少账号数量
+- 降低 TARGET_SECONDS 上限
+
+### 问题 4：代理连接失败
+
+**症状**：`❌ GOST 启动失败`
+
+**解决**：
+- 检查代理 URL 格式是否正确
+- 检查代理是否可用
+- 换一个代理试试
 
 ---
 
 ## ❓ 常见问题
 
-### Q: 必须用公开仓库吗？
+### Q: 账号被封了怎么办？
 
-**A**: 是的。私有仓库 GHA 每月只有 2000 分钟，3 账号每 2h 跑约需 3600 分钟/月，不够用。公开仓库无限。
-
-### Q: Cookie 多久过期？
-
-**A**: 一般 7-30 天。建议每周更新一次。如果 TG 通知收到 `cookie 注入后仍是登录页`，就需要更新。
+**A**: 重新注册一个新账号，更新 `GAME4FREE_ACCOUNT` Secret 里的续期 URL。
 
 ### Q: 可以加更多账号吗？
 
-**A**: 可以。编辑 `.github/workflows/gaming4free.yml`：
-```yaml
-matrix:
-  account: [1, 2, 3, 4, 5]  # 加到 5 个账号
-```
-然后添加对应的 `MC_USERNAME_4`、`GF_COOKIE_4` 等 Secret。
+**A**: 可以。在 `GAME4FREE_ACCOUNT` Secret 里每行加一个账号即可。
 
-### Q: 会封号吗？
+### Q: 需要配置 Cookie 吗？
 
-**A**: 不会。gaming4free 的 +90 min 按钮就是给用户点的，每 5 分钟点一次是正常使用频率。
+**A**: 不需要。新版脚本通过 Vote API 续期，不需要登录 Cookie。
 
-### Q: GHA 会不会跑着跑着停了？
+### Q: 代理必须配 2 条吗？
 
-**A**: 不会。脚本有自动恢复机制，异常自动重启最多 2 次。
+**A**: 不是必须，但建议配 2 条交替使用，避免单条代理 IP 被风控。
 
 ---
 
 ## 📞 技术支持
 
-- 问题反馈：https://github.com/weikkadd/checkin-new-panel/issues
+- 问题反馈：https://github.com/weikkadd/checkin-gaming4/issues
 - 查看日志：仓库 → Actions → 点最新运行 → `运行续期脚本` 步骤
-- 下载截图：运行详情页底部 → `screenshots-*` artifact
+- 下载截图：运行详情页底部 → `debug-screenshots` artifact
 
 ## 📄 License
 
