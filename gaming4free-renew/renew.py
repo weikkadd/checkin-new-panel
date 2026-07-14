@@ -132,52 +132,68 @@ def get_remaining_time(sb):
 
 def click_plus_90(sb):
     """点击 +90 min 按钮"""
-    selectors = [
-        'span:has-text("+ 90 min")',
-        'span:has-text("+90 min")',
-        'a:has-text("+ 90 min")',
-        'a:has-text("+90 min")',
-        'button:has-text("+ 90")',
-        'button:has-text("+90")',
-        '[class*="extend"]',
-        '[class*="renew"]',
-        '[class*="add-time"]',
-        '[class*="plus"]',
-        '[onclick*="90"]',
-        '[onclick*="extend"]',
-    ]
+    # 直接用 JS 找到包含 '90 min' 的元素, 然后向上找可点击的父元素
+    try:
+        result = sb.execute_script("""
+            // 找到所有包含 '90 min' 的元素
+            var allEls = document.querySelectorAll('*');
+            for (var i = 0; i < allEls.length; i++) {
+                var el = allEls[i];
+                var text = (el.innerText || '').trim();
+                if (text === '+ 90 min' || text === '+90 min' || text === '+ 90 min') {
+                    // 找到了! 打印它的 outerHTML 和父元素链
+                    var info = {
+                        tag: el.tagName,
+                        text: text,
+                        html: el.outerHTML.substring(0, 200),
+                        parentTag: el.parentElement ? el.parentElement.tagName : 'none',
+                        parentClass: el.parentElement ? el.parentElement.className.substring(0, 100) : '',
+                        parentHTML: el.parentElement ? el.parentElement.outerHTML.substring(0, 300) : ''
+                    };
 
-    for sel in selectors:
-        try:
-            count = sb.execute_script(f"return document.querySelectorAll('{sel}').length;")
-            if count > 0:
-                # 用 JS 找到包含 +90 min 的元素并点击 (包括父元素)
-                clicked = sb.execute_script("""
-                    var els = document.querySelectorAll(arguments[0]);
-                    for (var i = 0; i < els.length; i++) {
-                        var el = els[i];
-                        // 如果是 span, 点击它的父元素 (button/a)
-                        if (el.tagName === 'SPAN') {
-                            var parent = el.closest('a, button, [role="button"], [class*="btn"]');
-                            if (parent) {
-                                parent.scrollIntoView({block: 'center'});
-                                parent.click();
-                                return true;
-                            }
+                    // 向上找可点击的元素
+                    var clickTarget = el;
+                    for (var j = 0; j < 10; j++) {
+                        if (!clickTarget) break;
+                        var tag = clickTarget.tagName;
+                        // 检查是否有 onclick 或是 a/button/[role=button]
+                        if (tag === 'A' || tag === 'BUTTON' ||
+                            clickTarget.getAttribute('role') === 'button' ||
+                            clickTarget.onclick ||
+                            clickTarget.className.includes('btn') ||
+                            clickTarget.className.includes('click')) {
+                            clickTarget.scrollIntoView({block: 'center'});
+                            clickTarget.click();
+                            info.clicked = true;
+                            info.clickedTag = clickTarget.tagName;
+                            info.clickedClass = clickTarget.className.substring(0, 100);
+                            return info;
                         }
-                        el.scrollIntoView({block: 'center'});
-                        el.click();
-                        return true;
+                        clickTarget = clickTarget.parentElement;
                     }
-                    return false;
-                """, sel)
-                if clicked:
-                    log(f"✅ 已点击 +90 min 按钮 (选择器: {sel})")
-                    return True
-        except:
-            continue
 
-    return False
+                    // 如果没找到可点击的父元素, 直接点击 span 本身
+                    el.scrollIntoView({block: 'center'});
+                    el.click();
+                    info.clicked = true;
+                    info.clickedTag = el.tagName;
+                    info.clickedClass = el.className.substring(0, 100);
+                    return info;
+                }
+            }
+            return {clicked: false};
+        """)
+
+        if result and result.get('clicked'):
+            log(f"✅ 已点击 +90 min (点击了 {result.get('clickedTag', '?')} 元素)")
+            log(f"📋 按钮信息: {result.get('tag', '?')} → 父: {result.get('parentTag', '?')}")
+            return True
+        else:
+            log(f"❌ JS 搜索未找到 '90 min' 元素")
+            return False
+    except Exception as e:
+        log(f"❌ 点击异常: {e}")
+        return False
 
 def handle_confirm(sb):
     """处理点击后可能出现的确认弹窗"""
