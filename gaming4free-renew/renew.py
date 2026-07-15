@@ -92,12 +92,12 @@ def get_remaining_time(sb):
         ]
         for sel in selectors:
             try:
-                text = sb.execute_script(f"var el = document.querySelector('{sel}'); return el ? el.textContent.trim() : '';")
+                text = sb.execute_script(f"(function(){{ var el = document.querySelector('{sel}'); return el ? el.textContent.trim() : ''; }})();")
                 if text and len(text) < 30:
                     secs = parse_countdown_seconds(text)
                     if secs > 0: return text, secs
             except: continue
-        page_text = sb.execute_script("return document.body ? document.body.innerText : '';")
+        page_text = sb.execute_script("(function(){ return document.body ? document.body.innerText : ''; })();")
         if page_text:
             import re
             match = re.search(r'(\d{1,2}:\d{2}:\d{2})', page_text)
@@ -122,6 +122,7 @@ def close_modals(sb):
             try:
                 # 检查元素是否存在且在 modal 或 dialog 中
                 is_modal = sb.execute_script(f"""
+                    (function() {{
                     var el = document.querySelector('{sel}');
                     if (!el) return false;
                     var p = el.parentElement;
@@ -130,6 +131,7 @@ def close_modals(sb):
                         p = p.parentElement;
                     }}
                     return false;
+                    }})();
                 """)
                 if is_modal:
                     sb.click(sel)
@@ -218,7 +220,7 @@ def handle_confirm(sb):
             sb.uc_gui_click_captcha()
             
             # 检查是否还在“正在验证”状态
-            is_verifying = sb.execute_script("""
+            is_verifying = sb.execute_script("""(function() {
                 var iframes = document.querySelectorAll('iframe[src*="cloudflare"]');
                 for (var f of iframes) {
                     try {
@@ -227,6 +229,7 @@ def handle_confirm(sb):
                     } catch(e) {}
                 }
                 return false;
+            })();
             """)
             if is_verifying:
                 log("⏳ 验证码正在验证中，等待 5 秒...")
@@ -243,6 +246,7 @@ def handle_confirm(sb):
     for kw in confirm_keywords:
         try:
             sb.execute_script(f"""
+                (function() {{
                 var btns = document.querySelectorAll('button, a');
                 for (var b of btns) {{
                     if (b.innerText.includes('{kw}')) {{
@@ -250,6 +254,7 @@ def handle_confirm(sb):
                         return true;
                     }}
                 }}
+                }})();
             """)
         except: continue
     return False
