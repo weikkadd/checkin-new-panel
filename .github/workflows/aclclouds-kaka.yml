@@ -1,9 +1,16 @@
-name: AclClouds-Kaka-Renew
+name: ACLClouds-Renew
 
 on:
+  workflow_dispatch:
+    inputs:
+      threshold_hours:
+        description: '续期阈值 (小时), 默认 48'
+        required: false
+        default: '48'
   schedule:
-    - cron: "0 1 * * *"
-  workflow_dispatch: {}
+    # 每天 UTC 03:00 / 15:00 跑两次 (确保 24h 内至少跑一次)
+    - cron: '0 3 * * *'
+    - cron: '0 15 * * *'
 
 permissions:
   contents: read
@@ -11,24 +18,28 @@ permissions:
 jobs:
   renew:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.11'
 
-      - name: Install deps
+      - name: 📦 安装依赖
         run: |
-          pip install playwright
-          playwright install chromium
+          python -m pip install --upgrade pip
+          pip install -r ACLClouds-server/requirements.txt
 
-      - name: Renew
+      - name: 🚀 运行续期脚本
         env:
-          KAKA_GOOGLE_EMAIL: ${{ secrets.KAKA_GOOGLE_EMAIL }}
-          KAKA_GOOGLE_PASSWORD: ${{ secrets.KAKA_GOOGLE_PASSWORD }}
+          PYTHONIOENCODING: utf-8
+          ACL_COOKIES: ${{ secrets.ACL_COOKIES }}
+          ACL_ACCOUNTS: ${{ secrets.ACL_ACCOUNTS }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        run: python ACLClouds-server/renew.py
+          RENEW_THRESHOLD_HOURS: ${{ github.event.inputs.threshold_hours || '48' }}
+        run: |
+          echo "阈值: ${RENEW_THRESHOLD_HOURS}h"
+          python ACLClouds-server/renew.py
