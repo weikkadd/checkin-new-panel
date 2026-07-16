@@ -208,7 +208,7 @@ def handle_turnstile(sb, max_retries=3):
     return False
 
 def click_plus_90(sb):
-    """点击 +90 min 按钮"""
+    """点击 +90 min 按钮 — JS dispatchEvent 优先 (v3.1 验证可用)"""
     close_modals(sb)
 
     # 检查 cooldown
@@ -221,7 +221,58 @@ def click_plus_90(sb):
     if btn_status:
         log(f"📋 按钮状态: {btn_status.get('text','')}")
 
-    # 1. 检查广告按钮 (收紧关键词，避免误匹配)
+    # 1. ★ 优先: JS dispatchEvent 模拟完整鼠标事件序列
+    #    这是 v3.1 验证可用的方案, 能触发 livewire/wire:click 等 Alpine.js 监听器
+    #    SeleniumBase 原生 click 只触发 click 事件, 不触发 mousedown/mouseup, 经常无效
+    log("🚀 尝试 JS dispatchEvent 点击...")
+    js_real_click = """
+    (function() {
+        var targets = ["+ 90 min", "+90 min", "90 min"];
+        var all = document.querySelectorAll('button, [role="button"], a');
+        for (var i = 0; i < all.length; i++) {
+            var el = all[i];
+            var text = (el.innerText || el.textContent || "").trim();
+            if (text.length > 30) continue;
+            for (var j = 0; j < targets.length; j++) {
+                if (text.indexOf(targets[j]) !== -1 && !el.disabled) {
+                    el.scrollIntoView({block: 'center', behavior: 'instant'});
+                    try { el.focus({preventScroll: false}); } catch(e) {}
+                    var rect = el.getBoundingClientRect();
+                    var x = rect.left + rect.width / 2;
+                    var y = rect.top + rect.height / 2;
+                    var opts = {bubbles: true, cancelable: true, view: window, clientX: x, clientY: y};
+                    el.dispatchEvent(new MouseEvent('mousedown', opts));
+                    el.dispatchEvent(new MouseEvent('mouseup', opts));
+                    el.dispatchEvent(new MouseEvent('click', opts));
+                    // 如果是 span/strong 包裹, 也点父元素
+                    if (el.tagName === 'SPAN' || el.tagName === 'STRONG') {
+                        var p = el.parentElement;
+                        if (p) {
+                            p.dispatchEvent(new MouseEvent('mousedown', opts));
+                            p.dispatchEvent(new MouseEvent('mouseup', opts));
+                            p.dispatchEvent(new MouseEvent('click', opts));
+                        }
+                    }
+                    return 'clicked:' + text;
+                }
+            }
+        }
+        return false;
+    })();
+    """
+    try:
+        result = sb.execute_script(js_real_click)
+        if result:
+            log(f"🚀 JS dispatchEvent 点击: {result}")
+            screenshot(sb, "after-js-click")
+            time.sleep(3)
+            handle_turnstile(sb)
+            time.sleep(5)  # 给 livewire 请求时间
+            return True
+    except Exception as e:
+        log(f"⚠️ JS 点击异常: {e}")
+
+    # 2. 备用: 检查广告按钮 (Watch Ad 等)
     log("🔍 检查广告按钮...")
     ad_keywords = ['Watch Ad', 'Play Ad', 'Claim Reward', 'Get Free Time', 'Earn Time']
     for kw in ad_keywords:
@@ -237,7 +288,6 @@ def click_plus_90(sb):
             if ad_result:
                 log(f"🎬 广告按钮: {ad_result}")
                 time.sleep(15)
-                # 广告后点 +90
                 result2 = sb.execute_script(
                     '(function() { var btns = document.querySelectorAll("button"); '
                     'for (var i = 0; i < btns.length; i++) { var t = btns[i].innerText||""; '
@@ -253,14 +303,12 @@ def click_plus_90(sb):
         except:
             continue
 
-    # 2. SeleniumBase 原生点击
+    # 3. 最后兜底: SeleniumBase 原生点击
     xpaths = [
         "//button[contains(text(), '+ 90 min')]",
         "//button[contains(., '+90 min')]",
         "//*[contains(text(), '+ 90 min')]/ancestor::button",
-        "//*[contains(text(), '+90 min')]/ancestor::button",
         "//button[contains(., '90 min')]",
-        "//button[contains(., '90') and not(contains(., '+0'))]",
     ]
     for xpath in xpaths:
         try:
@@ -269,53 +317,14 @@ def click_plus_90(sb):
                 time.sleep(0.5)
                 screenshot(sb, "before-click")
                 sb.click(xpath)
-                log(f"✅ 点击: {xpath}")
+                log(f"✅ 兜底点击: {xpath}")
                 time.sleep(2)
-                # ★ 关键修复: 点击后立即检查 Turnstile
                 handle_turnstile(sb)
-                time.sleep(3)
+                time.sleep(5)
                 screenshot(sb, "after-click")
                 return True
         except:
             continue
-
-    # 3. JS 原生 click (适配 Alpine.js)
-    js_real_click = """
-    (function() {
-        var targets = ["+ 90 min", "+90 min", "90 min"];
-        var all = document.querySelectorAll('button, [role="button"]');
-        for (var i = 0; i < all.length; i++) {
-            var el = all[i];
-            var text = (el.innerText || el.textContent || "").trim();
-            for (var j = 0; j < targets.length; j++) {
-                if (text.indexOf(targets[j]) !== -1 && !el.disabled) {
-                    el.scrollIntoView({block: 'center', behavior: 'instant'});
-                    el.focus({preventScroll: false});
-                    // 模拟完整鼠标事件序列
-                    var rect = el.getBoundingClientRect();
-                    var x = rect.left + rect.width / 2;
-                    var y = rect.top + rect.height / 2;
-                    el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, clientX: x, clientY: y}));
-                    el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, clientX: x, clientY: y}));
-                    el.dispatchEvent(new MouseEvent('click', {bubbles: true, clientX: x, clientY: y}));
-                    return 'clicked:' + text;
-                }
-            }
-        }
-        return false;
-    })();
-    """
-    try:
-        result = sb.execute_script(js_real_click)
-        if result:
-            log(f"🚀 JS 点击: {result}")
-            time.sleep(2)
-            handle_turnstile(sb)
-            time.sleep(3)
-            screenshot(sb, "after-js-click")
-            return True
-    except Exception as e:
-        log(f"⚠️ JS 点击异常: {e}")
 
     log("❌ 所有点击策略失败")
     screenshot(sb, "click-fail")
