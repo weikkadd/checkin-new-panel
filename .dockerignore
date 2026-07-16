@@ -1,9 +1,0 @@
-node_modules
-dist
-.env
-*.log
-*.backup
-*.bak
-checkin-api/
-.git
-.cache
