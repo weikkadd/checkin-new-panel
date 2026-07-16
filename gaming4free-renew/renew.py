@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
 """
 gaming4free 自动续期脚本 v5
-- 核心: 识别并走完「看广告得时长」流程 (adLoading → adRewardReady → 必要时再点 +90 → extend)
-- 核心: 按 Livewire 方法名识别真实续期调用 (轮询 $refresh 不再误报为「疑似续期请求」)
-- 修复: 点击后不再立刻重载页面 (会打断广告流程); 不再乱点 Confirm/OK (会误杀广告弹窗)
-- 修复: 「时间异常减少」误报 — 两次读取间的自然流逝不等于异常
+- 核心: 识别并走完「看广告得时长」流程
+- 核心: 按 Livewire 方法名识别真实续期调用
+- 修复: 点击后不再立刻重载页面 (会打断广告流程); 不再乱点 Confirm/OK
+- 修复: 「时间异常减少」误报
 - 增加: Alpine 组件状态实时观测 + 完整按钮 HTML dump + 广告元素检测
 - 保留: uc_click 真实点击 / Turnstile 处理 / fetch+XHR 请求监听
-- 更新: 实现方案 A — 点击前轮询等待按钮文本变为 "watch ad · +90 min"，避免误触验证码
+- 更新: 实现方案 A — 点击前轮询等待按钮文本变为 "watch ad · +90 min"
 """
 
 import os, time, random, urllib.request, urllib.parse, re
 from seleniumbase import SB
 
-# ================== 环境变量 ==================
 TG_CHAT_ID = os.environ.get("TG_CHAT_ID", "").strip()
 TG_TOKEN   = os.environ.get("TG_BOT_TOKEN", "").strip()
 GF_COOKIE  = os.environ.get("GAME4FREE_COOKIE", "").strip()
@@ -22,11 +21,9 @@ raw_accounts = os.environ.get("GAME4FREE_ACCOUNT", "").strip().splitlines()
 ACCOUNTS = []
 for line in raw_accounts:
     line = line.strip()
-    if not line:
-        continue
+    if not line: continue
     parts = line.split(",", 1)
-    if len(parts) == 2:
-        ACCOUNTS.append((parts[0].strip(), parts[1].strip()))
+    if len(parts) == 2: ACCOUNTS.append((parts[0].strip(), parts[1].strip()))
 
 TARGET_SECONDS = 48 * 3600
 ADD_SECONDS = 90 * 60
@@ -35,7 +32,6 @@ MAX_ROUNDS = 5
 AD_WAIT_SEC = 100
 SCREENSHOT_DIR = "/tmp/g4f-debug"
 
-# ================== 工具函数 ==================
 def now_str():
     import datetime
     return datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -46,42 +42,28 @@ def log(msg):
 def screenshot(sb, name):
     try:
         os.makedirs(SCREENSHOT_DIR, exist_ok=True)
-        path = f"{SCREENSHOT_DIR}/{name}.png"
-        sb.save_screenshot(path)
-        log(f"[截图] {path}")
-    except:
-        pass
+        sb.save_screenshot(f"{SCREENSHOT_DIR}/{name}.png")
+    except: pass
 
 def send_tg(result, server_name="", expiry=""):
-    if not TG_TOKEN or not TG_CHAT_ID:
-        return
-    msg = (
-        f"🎮Game4Free 续期通知\n"
-        f"⏰运行时间: {now_str()}\n"
-        f"🖥️服务器: {server_name}\n"
-    )
-    if expiry:
-        msg += f"🔢剩余时间: {expiry}\n"
+    if not TG_TOKEN or not TG_CHAT_ID: return
+    msg = f"🎮Game4Free 续期通知\n⏰运行时间: {now_str()}\n🖥️服务器: {server_name}\n"
+    if expiry: msg += f"🔢剩余时间: {expiry}\n"
     msg += f"📊续期结果: {result}"
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
     data = urllib.parse.urlencode({"chat_id": TG_CHAT_ID, "text": msg}).encode()
     try:
         req = urllib.request.Request(url, data=data, method="POST")
-        with urllib.request.urlopen(req, timeout=15):
-            log("📨 TG推送成功")
-    except Exception as e:
-        log(f"⚠️ TG推送失败: {e}")
+        with urllib.request.urlopen(req, timeout=15): log("📨 TG推送成功")
+    except Exception as e: log(f"⚠️ TG推送失败: {e}")
 
 def parse_countdown_seconds(text):
-    if not text:
-        return 0
+    if not text: return 0
     text = text.strip()
     parts = text.split(":")
     if len(parts) == 3:
-        try:
-            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-        except:
-            pass
+        try: return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        except: pass
     h = re.search(r'(\d+)\s*h', text, re.I)
     m = re.search(r'(\d+)\s*m', text, re.I)
     total = 0
@@ -89,31 +71,17 @@ def parse_countdown_seconds(text):
     if m: total += int(m.group(1)) * 60
     return total
 
-def format_hms(seconds):
-    seconds = max(0, int(seconds))
-    h, m, s = seconds // 3600, (seconds % 3600) // 60, seconds % 60
-    return f"{h:02d}:{m:02d}:{s:02d}"
-
-# ================== 续期逻辑 ==================
 def get_remaining_time(sb):
     try:
-        selectors = [
-            '[class*="timer"]', '[class*="remaining"]', '[class*="countdown"]',
-            '#sd-timer', '[class*="time-remaining"]', '[data-timer]',
-        ]
+        selectors = ['[class*="timer"]', '[class*="remaining"]', '[class*="countdown"]', '#sd-timer']
         for sel in selectors:
             try:
-                text = sb.execute_script(
-                    "(function() { var el = document.querySelector('" + sel + "'); "
-                    "return el ? el.textContent.trim() : ''; })();"
-                )
+                text = sb.execute_script(f"var el=document.querySelector('{sel}'); return el?el.textContent.trim():'';")
                 if text and len(text) < 30:
                     secs = parse_countdown_seconds(text)
                     if secs > 0: return text, secs
             except: continue
-        page_text = sb.execute_script(
-            "(function() { return document.body ? document.body.innerText : ''; })();"
-        )
+        page_text = sb.execute_script("return document.body?document.body.innerText:'';")
         if page_text:
             match = re.search(r'(\d{1,2}:\d{2}:\d{2})', page_text)
             if match: return match.group(1), parse_countdown_seconds(match.group(1))
@@ -123,61 +91,17 @@ def get_remaining_time(sb):
     return "", 0
 
 def close_modals(sb):
-    """关闭遮挡按钮的弹窗"""
     try:
-        close_selectors = [
-            'button:contains("Maybe later")',
-            'button:contains("×")',
-            '.modal-close',
-            'button:contains("Enjoy ad-free")',
-            '[aria-label="Close"]',
-        ]
-        for sel in close_selectors:
+        sels = ['button:contains("Maybe later")', '.modal-close', '[aria-label="Close"]']
+        for sel in sels:
             try:
-                is_modal = sb.execute_script(
-                    "(function() { var el = document.querySelector('" + sel + "'); "
-                    "if (!el) return false; var p = el.parentElement; "
-                    "while(p) { if (p.className && (p.className.indexOf('modal') !== -1 "
-                    "|| p.className.indexOf('dialog') !== -1 || p.tagName === 'DIALOG')) return true; "
-                    "p = p.parentElement; } return false; })();"
-                )
-                if is_modal:
-                    sb.click(sel)
-                    log(f"🛡️ 已关闭弹窗: {sel}")
-                    time.sleep(1)
+                if sb.execute_script(f"return !!document.querySelector('{sel}');"):
+                    sb.click(sel); log(f"🛡️ 已关闭弹窗: {sel}"); time.sleep(1)
             except: continue
     except: pass
 
-def clear_overlays(sb):
-    """点击前移除可能遮挡按钮的 modal/overlay 残留"""
-    try:
-        removed = sb.execute_script("""
-        (function() {
-            var n = 0;
-            document.querySelectorAll(
-                '.modal-backdrop, .modal.show, [x-show="true"][x-transition], ' +
-                '.fixed.inset-0.bg-black, .v-overlay, .modal-open'
-            ).forEach(function(el){
-                var txt = (el.innerText || '').trim();
-                var rect = el.getBoundingClientRect();
-                if (txt.length === 0 || (rect.width > window.innerWidth * 0.8
-                    && rect.height > window.innerHeight * 0.8)) {
-                    el.remove();
-                    n++;
-                }
-            });
-            return n;
-        })();
-        """)
-        if removed:
-            log(f"🧹 清除 {removed} 个遮罩残留")
-            time.sleep(0.5)
-    except Exception:
-        pass
-
 def check_button_cooldown(sb):
-    """检查 +90 按钮是否处于冷却"""
-    cooldown_check = """
+    js = """
     (function() {
         var btns = document.querySelectorAll('button');
         for (var i = 0; i < btns.length; i++) {
@@ -185,69 +109,40 @@ def check_button_cooldown(sb):
             if (text.indexOf('90') !== -1) {
                 var disabled = btns[i].disabled || btns[i].getAttribute('aria-disabled') === 'true';
                 var classes = btns[i].className || '';
-                var isCooldown = classes.indexOf('disabled') !== -1
-                    || classes.indexOf('cursor-not-allowed') !== -1 || disabled;
+                var isCooldown = classes.indexOf('disabled') !== -1 || classes.indexOf('cursor-not-allowed') !== -1 || disabled;
                 var waitMatch = text.match(/Wait\\s*(\\d+)/i) || text.match(/(\\d+)\\s*s/);
-                if (waitMatch) {
-                    return {cooldown: true, remaining: parseInt(waitMatch[1]), text: text.trim()};
-                }
-                if (isCooldown) {
-                    return {cooldown: true, disabled: true, text: text.trim()};
-                }
-                return {cooldown: false, text: text.trim(), html: btns[i].outerHTML.substring(0, 200)};
+                if (waitMatch) return {cooldown: true, remaining: parseInt(waitMatch[1]), text: text.trim()};
+                if (isCooldown) return {cooldown: true, disabled: true, text: text.trim()};
+                return {cooldown: false, text: text.trim()};
             }
         }
         return null;
     })();
     """
-    try:
-        return sb.execute_script(cooldown_check)
-    except:
-        return None
+    try: return sb.execute_script(js)
+    except: return None
 
 def handle_turnstile(sb, max_retries=3):
-    """处理 Cloudflare Turnstile 验证"""
     for attempt in range(max_retries):
         try:
-            cf_iframes = sb.find_elements('iframe[src*="cloudflare"]') or \
-                         sb.find_elements('iframe[src*="turnstile"]') or \
-                         sb.find_elements('iframe[title*="challenge"]')
-            if cf_iframes:
+            if sb.find_elements('iframe[src*="cloudflare"]') or sb.find_elements('iframe[src*="turnstile"]'):
                 log(f"🛡️ 检测到 Turnstile (尝试 {attempt+1}/{max_retries})")
                 screenshot(sb, f"turnstile-{attempt}")
                 try:
-                    sb.uc_gui_click_captcha()
-                    log("✅ uc_gui_click_captcha 已执行")
-                    time.sleep(5)
-                    return True
+                    sb.uc_gui_click_captcha(); log("✅ uc_gui_click_captcha 已执行"); time.sleep(5); return True
                 except Exception as e:
                     log(f"⚠️ uc_gui_click_captcha 失败: {e}")
-                    try:
-                        sb.switch_to_frame('iframe[src*="cloudflare"]')
-                        sb.click('input[type="checkbox"]')
-                        sb.switch_to_default_content()
-                        log("✅ 手动点击 checkbox")
-                        time.sleep(5)
-                        return True
-                    except:
-                        sb.switch_to_default_content()
-        except:
-            pass
+        except: pass
         time.sleep(2)
     return False
 
-# ================== v5: 广告流程处理 ==================
 POLLING_METHODS = ('$refresh', 'refresh', 'poll', '$poll')
 
 def read_alpine_state(sb):
-    """读取 +90 按钮所属 Alpine 组件的实时状态"""
     js = """
     (function() {
-        var btn = null;
-        var all = document.querySelectorAll('button');
-        for (var i = 0; i < all.length; i++) {
-            if ((all[i].innerText || '').indexOf('90') !== -1) { btn = all[i]; break; }
-        }
+        var btn = null; var all = document.querySelectorAll('button');
+        for (var i = 0; i < all.length; i++) { if ((all[i].innerText || '').indexOf('90') !== -1) { btn = all[i]; break; } }
         if (!btn) return null;
         var st = {cls: btn.className || '', disabledAttr: !!btn.disabled, hasAlpine: false};
         var root = btn.closest('[x-data]') || btn;
@@ -257,35 +152,175 @@ def read_alpine_state(sb):
         if (d) {
             st.hasAlpine = true;
             for (var k in d) {
-                try {
-                    var v = d[k];
-                    var tv = typeof v;
-                    if ((tv === 'boolean' || tv === 'number' || tv === 'string') && ('' + v).length < 60) {
-                        st[k] = v;
-                    }
+                try { var v = d[k]; var tv = typeof v;
+                    if ((tv === 'boolean' || tv === 'number' || tv === 'string') && ('' + v).length < 60) st[k] = v;
                 } catch(e) {}
             }
         }
         return st;
     })();
     """
-    try:
-        return sb.execute_script(js)
-    except Exception:
-        return None
+    try: return sb.execute_script(js)
+    except: return None
 
 def detect_ad(sb):
-    """检测页面上正在展示的广告"""
     js = """
     (function() {
         var vids = document.querySelectorAll('video');
-        for (var i = 0; i < vids.length; i++) {
-            if (vids[i].offsetParent !== null) {
-                return 'video(dur=' + (vids[i].duration || '?') + ',t=' + (vids[i].currentTime || 0).toFixed(0) + ',paused=' + vids[i].paused + ')';
-            }
-        }
+        for (var i = 0; i < vids.length; i++) { if (vids[i].offsetParent !== null) return 'video'; }
         var ifs = document.querySelectorAll('iframe');
         for (var j = 0; j < ifs.length; j++) {
             var s = ((ifs[j].src || '') + ' ' + (ifs[j].id || '') + ' ' + (ifs[j].name || ''));
-            if (/ads|doubleclick|googlesyndication|adnxs|pubmatic|reward|vast/i.test(s) && ifs[j].offsetParent !== null) {
-                return
+            if (/ads|doubleclick|reward/i.test(s) && ifs[j].offsetParent !== null) return 'iframe';
+        }
+        return '';
+    })();
+    """
+    try: return sb.execute_script(js) or ''
+    except: return ''
+
+def try_ad_controls(sb, ad_elapsed):
+    if ad_elapsed > 20:
+        try:
+            sb.execute_script("""
+            var els = document.querySelectorAll('[aria-label="Close"], [class*="modal"] button');
+            for (var i = 0; i < els.length; i++) { if(els[i].offsetParent !== null) { els[i].click(); break; } }
+            """)
+        except: pass
+            def wait_ad_flow(sb, before_secs, max_wait=AD_WAIT_SEC):
+    result = {'extend_seen': False, 'reward_ready': False, 'ad_seen': False, 'live_text': '', 'live_secs': 0}
+    log(f"🎬 进入广告等待流程 (最长 {max_wait}s, 期间不重载页面)...")
+    t0 = time.time()
+    clicked_again = False
+    alpine_logged = 0
+    ad_first_seen = None
+
+    while time.time() - t0 < max_wait:
+        elapsed = time.time() - t0
+
+        try:
+            calls = sb.execute_script(
+                "(function(){ return (window.__reqs||[]).filter(function(r){"
+                "return r.m==='POST' && /livewire/i.test(r.u) && (r.methods||[]).length>0;"
+                "}).map(function(r){ return {methods: r.methods}; }); })();"
+            ) or []
+        except: calls = []
+        
+        real_methods = []
+        for c in calls:
+            for m in (c.get('methods') or []):
+                if m not in POLLING_METHODS and m not in real_methods: real_methods.append(m)
+        
+        if real_methods:
+            log(f"✅ 捕获真实 Livewire 调用: method={real_methods}")
+            result['extend_seen'] = True
+            screenshot(sb, "extend-call")
+            time.sleep(3)
+            lt, ls = get_remaining_time(sb)
+            if ls > before_secs + 60:
+                log(f"🎉 页面已实时刷新时间: {lt}")
+                result['live_text'], result['live_secs'] = lt, ls
+            break
+
+        st = read_alpine_state(sb)
+        if st:
+            if st.get('adRewardReady') is True and not result['reward_ready']:
+                result['reward_ready'] = True
+                log(f"🎁 [{int(elapsed)}s] adRewardReady=true — 广告奖励已就绪!")
+        elif alpine_logged < 2:
+            log(f"🔬 Alpine[{int(elapsed)}s]: 未取到组件状态")
+            alpine_logged += 1
+
+        ad = detect_ad(sb)
+        if ad and not result['ad_seen']:
+            result['ad_seen'] = True
+            ad_first_seen = time.time()
+            log(f"🎬 [{int(elapsed)}s] 检测到广告: {ad}")
+            screenshot(sb, "ad-showing")
+
+        if result['reward_ready'] and not clicked_again:
+            clicked_again = True
+            log("🖱️ 奖励就绪, 再次点击 +90 触发真正的续期调用...")
+            try:
+                sb.uc_click("button:contains('+ 90 min')", reconnect_time=4)
+                log("🎯 二次点击完成")
+            except Exception as e:
+                log(f"⚠️ 二次点击异常: {e}")
+            time.sleep(3)
+            continue
+
+        if result['ad_seen'] and ad_first_seen:
+            try_ad_controls(sb, time.time() - ad_first_seen)
+
+        if int(elapsed) % 20 < 2 and elapsed > 5:
+            try:
+                lt, ls = get_remaining_time(sb)
+                if ls > before_secs + 60:
+                    log(f"🎉 [{int(elapsed)}s] 页面时间已实时增加: {lt}")
+                    result['live_text'], result['live_secs'] = lt, ls
+                    break
+            except: pass
+
+        time.sleep(1)
+
+    if not result['live_text']:
+        lt, ls = get_remaining_time(sb)
+        result['live_text'], result['live_secs'] = lt, ls
+        
+    return result['live_text'], result
+
+
+def main():
+    if not ACCOUNTS:
+        log("❌ 未配置 GAME4FREE_ACCOUNT 环境变量"); return
+        
+    for user, pwd in ACCOUNTS:
+        log(f"\n========== 开始处理账号: {user} ==========")
+        with SB(test=True, uc=True, headless=True, proxy="socks5://127.0.0.1:1080" if os.environ.get("IS_PROXY") == "true" else None) as sb:
+            try:
+                sb.open("https://gaming4free.net/login")
+                time.sleep(3)
+                handle_turnstile(sb)
+                
+                sb.type('input[name="email"]', user)
+                sb.type('input[name="password"]', pwd)
+                sb.click('button[type="submit"]')
+                time.sleep(5)
+                
+                handle_turnstile(sb)
+                time.sleep(3)
+                
+                close_modals(sb)
+                before_text, before_secs = get_remaining_time(sb)
+                log(f"⏱️ 续期前剩余: {before_text} ({before_secs}s)")
+                
+                btn_info = check_button_cooldown(sb)
+                if btn_info and btn_info.get('cooldown'):
+                    log(f"⏳ 按钮冷却中: {btn_info.get('text')}")
+                    send_tg("按钮冷却中", user, before_text)
+                    continue
+                    
+                log("🖱️ 点击 +90 按钮...")
+                try:
+                    sb.uc_click("button:contains('+ 90 min')", reconnect_time=4)
+                except Exception as e:
+                    log(f"⚠️ 点击失败: {e}")
+                    send_tg("点击按钮失败", user, before_text)
+                    continue
+                    
+                live_text, res = wait_ad_flow(sb, before_secs)
+                
+                if res['live_secs'] > before_secs + 60:
+                    log(f"✅ 续期成功! 新时间: {live_text}")
+                    send_tg("✅ 续期成功", user, live_text)
+                else:
+                    log(f"❌ 续期失败或超时. 当前时间: {live_text}")
+                    send_tg("❌ 续期失败", user, live_text)
+                    
+            except Exception as e:
+                log(f"❌ 账号 {user} 执行异常: {e}")
+                screenshot(sb, "error")
+                send_tg(f"❌ 执行异常: {e}", user)
+
+if __name__ == "__main__":
+    main()
