@@ -8,7 +8,6 @@ gaming4free 自动续期脚本 v4
 """
 
 import os, time, random, urllib.request, urllib.parse, re
-from selenium.webdriver.common.action_chains import ActionChains
 from seleniumbase import SB
 
 # ================== 环境变量 ==================
@@ -324,54 +323,32 @@ def click_plus_90(sb):
         except Exception as e:
             log(f"⚠️ [策略1] wire:click 点击异常: {e}")
 
-    # 2. ★ 主策略: JS 定位坐标 + ActionChains 真实点击 (isTrusted=true)
-    #    XPath is_element_visible 在 UC mode 下不可靠, 改用 JS 定位按钮获取坐标,
-    #    再用 ActionChains 在该坐标执行真实鼠标点击 (isTrusted=true, 能触发 Alpine @click)
+    # 2. ★ 主策略: sb.uc_click (SeleniumBase UC mode 专用真实点击)
+    #    ActionChains/JS合成 click 都不行:
+    #    - ActionChains 用 sb.driver 直连 → UC mode reconnect 窗口期 Connection refused
+    #    - JS el.click() → isTrusted=false → Alpine @click 不响应
+    #    sb.uc_click 内部: setTimeout调度点击 + 断开chromedriver + 等待 + 重连
+    #    → 真实可信点击(isTrusted=true) 且 绕过 reconnect 窗口期
+    #    用 jQuery 风格 :contains() 选择器定位含文字的按钮 (SeleniumBase 原生支持)
     if not clicked:
-        locate_js = """
-        (function() {
-            var all = document.querySelectorAll('button, [role="button"], a');
-            for (var i = 0; i < all.length; i++) {
-                var el = all[i];
-                var t = (el.innerText || el.textContent || "").replace(/\\s+/g, ' ').trim();
-                if (t.length <= 30 && /90/.test(t) && !el.disabled
-                    && el.getAttribute('aria-disabled') !== 'true') {
-                    el.scrollIntoView({block: 'center', behavior: 'instant'});
-                    try { el.focus(); } catch(e) {}
-                    var rect = el.getBoundingClientRect();
-                    return {
-                        found: true,
-                        x: Math.round(rect.left + rect.width / 2),
-                        y: Math.round(rect.top + rect.height / 2),
-                        w: Math.round(rect.width),
-                        h: Math.round(rect.height),
-                        text: t,
-                        tag: el.tagName.toLowerCase()
-                    };
-                }
-            }
-            return {found: false};
-        })();
-        """
-        try:
-            info = sb.execute_script(locate_js)
-            if info and info.get('found'):
-                cx, cy = info['x'], info['y']
-                log(f"🎯 [策略2] JS 定位: <{info['tag']}> '{info['text']}' at ({cx},{cy}) {info['w']}x{info['h']}")
-                # ActionChains: 真实鼠标移动+点击 → isTrusted=true
-                actions = ActionChains(sb.driver)
-                actions.move_by_offset(cx, cy)
-                actions.click()
-                actions.perform()
-                log(f"🎯 [策略2] ActionChains 真实点击完成 at ({cx},{cy})")
+        uc_selectors = [
+            "button:contains('+ 90 min')",
+            "button:contains('90 min')",
+            "button:contains('+90')",
+        ]
+        for sel in uc_selectors:
+            try:
+                # reconnect_time=4: 点击后断开4秒再重连 (给 Turnstile/Livewire 反应时间)
+                sb.uc_click(sel, reconnect_time=4)
+                log(f"🎯 [策略2] uc_click 真实点击成功: {sel}")
                 screenshot(sb, "after-click")
                 clicked = True
-            else:
-                log("⚠️ [策略2] JS 定位未找到按钮, 降级合成 click")
-        except Exception as e:
-            log(f"⚠️ [策略2] ActionChains 异常: {e}")
+                break
+            except Exception as e:
+                log(f"⚠️ [策略2] uc_click({sel}) 异常: {e}")
+                continue
 
-        # ActionChains 失败的兜底: JS 合成 click (isTrusted=false)
+        # uc_click 失败的兜底: JS 合成 click (isTrusted=false, 最后手段)
         if not clicked:
             try:
                 result = sb.execute_script("""
