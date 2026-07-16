@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
 """
-AclClouds 卡卡项目自动续期脚本 v2
-- Playwright + Google OAuth 登录（支持弹窗模式）
+AclClouds 卡卡项目自动续期脚本 v3
+- Cookie 注入（绕过 Google OAuth 封锁）
 - 自动定位"卡卡"项目
 - 到期前 2 天点击续期按钮
-- TG 通知结果
-- 每步截图调试
+- TG 通知 + 每步截图
 """
 
 import os, time, random, asyncio, sys
 
 GOOGLE_EMAIL    = os.environ.get("KAKA_GOOGLE_EMAIL", "").strip()
-GOOGLE_PASSWORD = os.environ.get("KAKA_GOOGLE_PASSWORD", "").strip()
+GOOGLE_PASSWORD = ***"KAKA_GOOGLE_PASSWORD", "").strip()
+ACL_TOKEN       = os.environ.get("ACL_TOKEN", "").strip()  # dash.aclclouds.com 的 Cookie
 TG_CHAT_ID      = os.environ.get("TG_CHAT_ID", "").strip()
-TG_TOKEN        = os.environ.get("TG_BOT_TOKEN", "").strip()
+TG_TOKEN        = ***"TG_BOT_TOKEN", "").strip()
 
 BASE_URL      = "https://dash.aclclouds.com"
-LOGIN_URL     = f"{BASE_URL}/login"
 PROJECTS_URL  = f"{BASE_URL}/projects"
 
 SCREENSHOT_DIR = "/tmp/aclclouds-debug"
@@ -45,7 +44,6 @@ async def screenshot(page, name):
     path = f"{SCREENSHOT_DIR}/{name}.png"
     await page.screenshot(path=path, full_page=True)
     print(f"[截图] {path}")
-    return path
 
 
 async def run():
@@ -69,251 +67,212 @@ async def run():
         page = await context.new_page()
 
         try:
-            # === Step 1: Google 登录 ===
-            print("[卡卡] Step 1/3: 打开登录页")
-            await page.goto(LOGIN_URL, wait_until="networkidle", timeout=30000)
-            await screenshot(page, "01-login-page")
-            rand_sleep(1, 2)
-
-            # 找 Google 登录按钮
-            google_selectors = [
-                'button:has-text("Google")',
-                'a:has-text("Google")',
-                '[data-provider="google"]',
-                '.google-btn', '.google-login',
-                'button:has-text("谷歌")',
-                'img[alt*="Google"]',
-                'div[class*="google"]',
-                'span:has-text("Google")',
-            ]
-            clicked = False
-            for sel in google_selectors:
-                try:
-                    btn = await page.query_selector(sel)
-                    if btn and await btn.is_visible():
-                        txt = (await btn.inner_text()).strip()[:50]
-                        print(f"[卡卡] 找到 Google 按钮: '{txt}' ({sel})")
-                        await btn.click()
-                        clicked = True
-                        break
-                except:
-                    continue
-
-            if not clicked:
-                # 最后尝试文本匹配
-                result = await page.evaluate("""
-                    () => {
-                        const all = document.querySelectorAll('a,button,div[role="button"],span[role="button"]');
-                        for (const el of all) {
-                            if (/google/i.test(el.textContent||'')) {
-                                el.click(); return el.textContent.trim();
-                            }
-                        }
-                        return null;
-                    }
-                """)
-                if result:
-                    print(f"[卡卡] 文本匹配找到: {result}")
-                    clicked = True
-
-            if not clicked:
-                await screenshot(page, "02-no-google-btn")
-                raise Exception("未找到 Google 登录按钮")
-
-            # 等 OAuth 弹出或跳转
-            rand_sleep(3, 5)
-            await screenshot(page, "03-after-google-click")
-            print(f"[卡卡] 点击后 URL: {page.url}")
-
-            # --- 关键: 处理弹窗 ---
-            popup_page = None
-            # 尝试获取通过 window.open 打开的弹窗
-            pages = context.pages
-            print(f"[卡卡] 当前打开 {len(pages)} 个页面")
-            for i, pg in enumerate(pages):
-                print(f"[卡卡]   页面 {i}: {pg.url[:100]}")
-                if pg != page:
-                    popup_page = pg
-
-            # 也监听可能的新弹窗
-            if not popup_page:
-                try:
-                    async with context.expect_page(timeout=5000) as popup_info:
-                        pass  # 可能已经弹出了
-                except:
-                    pass
-
-            pages = context.pages
-            if len(pages) > 1:
-                popup_page = pages[-1]
-
-            if popup_page:
-                print(f"[卡卡] 检测到弹窗: {popup_page.url[:120]}")
-                await popup_page.bring_to_front()
-                target_page = popup_page
-            elif "accounts.google.com" in page.url:
-                print("[卡卡] Google OAuth 在同页跳转")
-                target_page = page
+            # === Step 0: Cookie 注入 ===
+            print("[卡卡] Step 0: Cookie 注入")
+            if ACL_TOKEN:
+                # 注入 Cookie
+                cookies = []
+                for pair in ACL_TOKEN.split(";"):
+                    pair = pair.strip()
+                    if not pair:
+                        continue
+                    parts = pair.split("=", 1)
+                    if len(parts) == 2:
+                        cookies.append({
+                            "name": parts[0].strip(),
+                            "value": parts[1].strip(),
+                            "domain": ".aclclouds.com",
+                            "path": "/",
+                        })
+                if cookies:
+                    await context.add_cookies(cookies)
+                    print(f"[卡卡] 注入 {len(cookies)} 个 Cookie")
+                else:
+                    print("[卡卡] ⚠️ Cookie 格式无效")
             else:
-                # 可能登录页用的是 iframe 或弹窗还没打开，手动导航
-                print(f"[卡卡] 未检测到弹窗或跳转，当前 URL: {page.url}")
-                await screenshot(page, "04-no-popup")
-                # 尝试手动触发 Google OAuth URL
-                print("[卡卡] 尝试直接打开 Google OAuth...")
-                # 有些网站用统一的 Google auth URL
-                pass
+                print("[卡卡] ⚠️ 未设置 ACL_TOKEN，尝试无 Cookie 访问")
 
-            # 在目标页填写邮箱
-            if not target_page and "accounts.google.com" not in page.url:
-                # 最后手段: 重新截图看页面状态
-                await screenshot(page, "05-stuck")
-                raise Exception(f"Google OAuth 未触发，当前 URL: {page.url}")
+            # === Step 1: 验证登录状态 ===
+            print("[卡卡] Step 1/3: 验证登录")
+            await page.goto(PROJECTS_URL, wait_until="networkidle", timeout=30000)
+            rand_sleep(1, 2)
+            await screenshot(page, "01-projects-page")
 
-            tp = target_page if target_page else page
+            current_url = page.url
+            print(f"[卡卡] 当前 URL: {current_url}")
 
-            # 等待邮箱输入框
-            print("[卡卡] 等待邮箱输入框...")
-            email_input = None
-            for attempt in range(3):
-                try:
-                    email_input = await tp.wait_for_selector('input[type="email"]', timeout=10000)
-                    break
-                except:
-                    await screenshot(tp, f"06-email-wait-{attempt}")
-                    print(f"[卡卡] 邮箱框等待第 {attempt+1} 次超时，URL: {tp.url}")
-                    rand_sleep(2, 4)
+            # 检查是否被重定向到登录页
+            if "/login" in current_url or "sign_in" in current_url.lower():
+                await screenshot(page, "02-redirected-to-login")
+                raise Exception("Cookie 已过期，请更新 ACL_TOKEN")
 
-            if not email_input:
-                await screenshot(tp, "06-no-email")
-                # 尝试其他邮箱选择器
-                email_input = await tp.query_selector('input[name="identifier"]')
-                if not email_input:
-                    email_input = await tp.query_selector('#identifierId')
+            # 检查页面内容是否像项目列表
+            page_text = await page.evaluate("() => document.body ? document.body.innerText.substring(0, 500) : ''")
+            if "登录" in page_text and "卡卡" not in page_text:
+                await screenshot(page, "03-not-logged-in")
+                raise Exception("未登录状态，请更新 ACL_TOKEN")
 
-            if not email_input:
-                raise Exception(f"找不到邮箱输入框，URL: {tp.url}")
+            print("[卡卡] ✅ 登录状态正常")
 
-            await email_input.fill(GOOGLE_EMAIL)
-            print("[卡卡] 已填写邮箱")
-            rand_sleep(0.5, 1.5)
+            # === Step 2: 找卡卡项目 ===
+            print("[卡卡] Step 2/3: 定位卡卡项目")
+            await screenshot(page, "04-project-list")
 
-            # 点击下一步
-            next_btn = await tp.query_selector('button:has-text("Next"), button:has-text("下一步"), #identifierNext, #identifierNext > button')
-            if next_btn:
-                await next_btn.click()
-            rand_sleep(3, 5)
-
-            # 填写密码
-            try:
-                pwd_input = await tp.wait_for_selector('input[type="password"]', timeout=10000)
-                await pwd_input.fill(GOOGLE_PASSWORD)
-                print("[卡卡] 已填写密码")
-                rand_sleep(0.5, 1.5)
-                pwd_next = await tp.query_selector('button:has-text("Next"), button:has-text("下一步"), #passwordNext, #passwordNext > button')
-                if pwd_next:
-                    await pwd_next.click()
-            except:
-                print("[卡卡] 未出现密码框（设备已信任）")
-
-            rand_sleep(5, 10)
-
-            # 处理后续页面
-            all_pages = context.pages
-            for pg in all_pages:
-                u = pg.url
-                print(f"[卡卡] 页面: {u[:120]}")
-
-            # 回到主页面
-            main_page = page
-            for pg in context.pages:
-                if "dash.aclclouds.com" in pg.url:
-                    main_page = pg
-                    await main_page.bring_to_front()
-                    break
-
-            print(f"[卡卡] 当前主页 URL: {main_page.url}")
-            if "login" in main_page.url and "dash.aclclouds.com" in main_page.url:
-                await screenshot(main_page, "07-login-failed")
-                raise Exception("Google 登录未成功，仍在登录页")
-
-            print("[卡卡] ✅ Google 登录成功")
-
-            # === Step 2: 找卡卡 ===
-            print("[卡卡] Step 2/3: 定位卡卡")
-            await main_page.goto(PROJECTS_URL, wait_until="networkidle", timeout=30000)
-            rand_sleep(2, 4)
-            await screenshot(main_page, "08-projects")
-
-            found = await main_page.evaluate("""
+            # 查找"卡卡"并点击
+            found = await page.evaluate("""
                 () => {
-                    for (const el of document.querySelectorAll('a,button,div[role="button"],tr,li,.project,div')) {
+                    const els = document.querySelectorAll('a, button, div[role="button"], tr, li, .project, .card');
+                    for (const el of els) {
                         if (el.textContent && el.textContent.includes('卡卡')) {
-                            el.click(); return true;
+                            el.click();
+                            return true;
                         }
                     }
                     return false;
                 }
             """)
+
             if not found:
+                # 尝试更广泛的搜索
+                found = await page.evaluate("""
+                    () => {
+                        const all = document.querySelectorAll('*');
+                        for (const el of all) {
+                            if (el.children.length === 0 && el.textContent && el.textContent.includes('卡卡')) {
+                                let parent = el;
+                                for (let i = 0; i < 5; i++) {
+                                    parent = parent.parentElement;
+                                    if (!parent) break;
+                                    if (parent.tagName === 'A' || parent.tagName === 'BUTTON' || parent.getAttribute('role') === 'button') {
+                                        parent.click();
+                                        return true;
+                                    }
+                                }
+                                el.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }
+                """)
+
+            if not found:
+                await screenshot(page, "05-no-kaka")
+                # 打印页面所有文本帮助调试
+                print(f"[卡卡] 页面文本前500字: {page_text[:500]}")
                 raise Exception("未找到'卡卡'项目")
 
+            print("[卡卡] 找到卡卡项目，进入详情")
             rand_sleep(2, 4)
+            await screenshot(page, "06-kaka-detail")
 
-            # === Step 3: 续期 ===
-            print("[卡卡] Step 3/3: 续期")
-            await screenshot(main_page, "09-project-detail")
+            # === Step 3: 点击续期 ===
+            print("[卡卡] Step 3/3: 查找续期按钮")
 
             renew_selectors = [
-                'button:has-text("续期")', 'a:has-text("续期")',
-                'button:has-text("Renew")', 'button:has-text("免费续期")',
-                'button:has-text("延长")', 'button:has-text("延期")',
+                'button:has-text("续期")',
+                'a:has-text("续期")',
+                'button:has-text("Renew")',
+                'button:has-text("免费续期")',
+                'button:has-text("延长")',
+                'button:has-text("延期")',
+                'button:has-text("renew")',
+                'a:has-text("renew")',
             ]
+
             renew_done = False
             for sel in renew_selectors:
-                btn = await main_page.query_selector(sel)
+                btn = await page.query_selector(sel)
                 if btn:
                     v = await btn.is_visible()
                     d = await btn.is_disabled()
                     if v and not d:
                         txt = (await btn.inner_text()).strip()
-                        print(f"[卡卡] 点击续期: {txt}")
+                        print(f"[卡卡] 点击续期按钮: {txt}")
                         await btn.click()
                         renew_done = True
                         break
                     elif v and d:
-                        raise Exception(f"续期按钮禁用: {sel}")
+                        print(f"[卡卡] 续期按钮已禁用: {sel}")
+                        # 按钮在但禁用 = 未到续期窗口
+                        dur = round(time.time() - t0, 1)
+                        await screenshot(page, "07-renew-disabled")
+                        # 读取到期时间信息
+                        expiry_info = await page.evaluate("""
+                            () => {
+                                const txt = document.body.innerText;
+                                const m = txt.match(/到期[时间]*[：:]\s*([^\n]{5,30})/);
+                                return m ? m[0] : '';
+                            }
+                        """)
+                        tg("🎮 AclClouds 续期通知",
+                           f"🖥️项目: 卡卡\n📊续期结果: ⚠️未到续期窗口\n"
+                           f"{'⏰' + expiry_info if expiry_info else ''}\n⏱耗时: {dur}s")
+                        return
                     else:
                         print(f"[卡卡] 按钮不可见: {sel}")
 
             if not renew_done:
-                await screenshot(main_page, "10-no-renew-btn")
-                # 宽松模式: 没找到续期按钮不一定失败(可能未到时间窗口)
-                print("[卡卡] 续期按钮未出现（可能未到时间窗口）")
+                # 可能续期按钮确实不存在（未到时间窗口）
+                await screenshot(page, "08-no-renew-btn")
+
+                # 检查页面是否有到期时间信息
+                expiry_info = await page.evaluate("""
+                    () => {
+                        const txt = document.body.innerText;
+                        const m = txt.match(/(?:到期|expire|剩余|remaining)[^\n]{0,50}/i);
+                        return m ? m[0] : '';
+                    }
+                """)
+                print(f"[卡卡] 页面到期信息: {expiry_info}")
+                print("[卡卡] 续期按钮未出现（可能未到续期时间窗口）")
+
                 dur = round(time.time() - t0, 1)
                 tg("🎮 AclClouds 续期通知",
-                   f"🖥️项目: 卡卡\n📊续期结果: ⚠️未到窗口\n⏰耗时: {dur}s")
+                   f"🖥️项目: 卡卡\n📊续期结果: ⚠️续期按钮未出现\n"
+                   f"{'📋' + expiry_info if expiry_info else '可能未到续期窗口'}\n⏱耗时: {dur}s")
+                # 不报错退出，因为这不是真正的错误
                 return
 
             rand_sleep(2, 4)
+            await screenshot(page, "09-after-renew")
 
-            success = await main_page.evaluate(
-                "() => /续期成功|Renewal|已续期|操作成功|succeeded/i.test(document.body.innerText)"
-            )
+            # 检查续期结果
+            success = await page.evaluate("""
+                () => /续期成功|Renewal|已续期|操作成功|succeeded|success/i.test(
+                    document.body.innerText
+                )
+            """)
+
+            # 读取续期后的到期时间
+            new_expiry = await page.evaluate("""
+                () => {
+                    const txt = document.body.innerText;
+                    const m = txt.match(/(?:到期|expire|剩余|remaining)[^\n]{0,50}/i);
+                    return m ? m[0] : '';
+                }
+            """)
+
             dur = round(time.time() - t0, 1)
-            print(f"[卡卡] {'✅' if success else '✅'} 完成 (耗时 {dur}s)")
+            result = "✅续期成功" if success else "✅续期已执行"
+            print(f"[卡卡] {result} (耗时 {dur}s)")
+            if new_expiry:
+                print(f"[卡卡] 到期信息: {new_expiry}")
+
             tg("🎮 AclClouds 续期通知",
-               f"🖥️项目: 卡卡\n📊续期结果: {'✅成功' if success else '✅已执行'}\n⏰耗时: {dur}s")
+               f"🖥️项目: 卡卡\n📊续期结果: {result}\n"
+               f"{'📋' + new_expiry if new_expiry else ''}\n⏱耗时: {dur}s")
 
         except Exception as e:
             dur = round(time.time() - t0, 1)
             err = str(e)
             print(f"[卡卡] ❌ 失败: {err}")
             try:
-                await screenshot(page, "99-error-final")
+                await screenshot(page, "99-error")
             except:
                 pass
             tg("🎮 AclClouds 续期失败",
-               f"🖥️项目: 卡卡\n📊续期结果: ❌失败\n⚠️: {err}\n⏰耗时: {dur}s")
+               f"🖥️项目: 卡卡\n📊续期结果: ❌失败\n⚠️: {err}\n⏱耗时: {dur}s")
             sys.exit(1)
 
         finally:
@@ -321,7 +280,11 @@ async def run():
 
 
 if __name__ == "__main__":
-    if not GOOGLE_EMAIL or not GOOGLE_PASSWORD:
-        print("❌ 请设置 KAKA_GOOGLE_EMAIL 和 KAKA_GOOGLE_PASSWORD")
+    if not ACL_TOKEN:
+        print("❌ 请设置环境变量 ACL_TOKEN")
+        print("   获取方法:")
+        print("   1. 浏览器登录 https://dash.aclclouds.com")
+        print("   2. F12 → Application → Cookies → 复制所有 Cookie")
+        print("   3. 格式: key1=value1; key2=value2; ...")
         sys.exit(1)
     asyncio.run(run())
