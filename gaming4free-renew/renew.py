@@ -292,15 +292,34 @@ def main():
         log(f"\n========== 开始处理账号: {user} ==========")
         # 增加对 SeleniumBase 启动参数的注释和清理
         with SB(test=True, uc=True, headless=True, 
-                proxy="socks5://127.0.0.1:1080" if os.environ.get("IS_PROXY") == "true" else None,
-                # 增加对浏览器日志的捕获，有助于调试
-                enable_console_log=True,
-                # 禁用图片加载以提高速度和减少资源消耗
-                block_images=True
+                proxy=os.environ.get("PROXY_SERVER") if os.environ.get("IS_PROXY") == "true" else None,
+                block_images=True,
+                # 增加一些稳定性参数
+                settings_file=None,
+                recorder_ext=False
                 ) as sb:
             try:
                 log(f"🌐 尝试打开登录页面: https://gaming4free.net/login")
                 sb.open("https://gaming4free.net/login")
+                # 注入请求监听器
+                sb.execute_script("""
+                    window.__reqs = [];
+                    const originalFetch = window.fetch;
+                    window.fetch = function() {
+                        return originalFetch.apply(this, arguments).then(async (response) => {
+                            const clonedResponse = response.clone();
+                            try {
+                                const body = await clonedResponse.json();
+                                window.__reqs.push({
+                                    u: arguments[0],
+                                    m: 'POST',
+                                    methods: body.serverMemo ? body.serverMemo.data.methods : []
+                                });
+                            } catch (e) {}
+                            return response;
+                        });
+                    };
+                """)
                 time.sleep(3)
                 handle_turnstile(sb)
                 
