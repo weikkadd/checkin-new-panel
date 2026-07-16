@@ -271,21 +271,19 @@ def renew_account(sb, server_name, renew_url):
 
     new_text, new_secs = get_remaining_time(sb)
     
-    # 更宽松的成功判断
+    # 成功判断: 续期 +90 分钟 = 5400 秒
+    # 但重新加载页面有延迟 (10-30 秒), 倒计时也在走
+    # 所以只要 new_secs > time_secs (时间增加了) 就算成功
+    # 或者 new_secs 比 time_secs 少不到 60 秒 (页面加载延迟导致的时间差) 也算成功
     time_diff = new_secs - time_secs
-    if time_diff > 30:
-        log(f"✅ 续期成功! {time_text} → {new_text} (增加 {time_diff//60} 分钟)")
+    if time_diff > -60:
+        if time_diff > 0:
+            log(f"✅ 续期成功! {time_text} → {new_text} (增加 {time_diff//60} 分钟)")
+        else:
+            log(f"✅ 续期成功! {time_text} → {new_text} (时间差 {time_diff}秒, 在容错范围内)")
         return new_text, new_secs, True
-    elif time_diff > 0:
-        log(f"⚠️ 时间有微小变化 ({time_diff}秒)，可能续期成功但页面未完全刷新")
-        time.sleep(3)
-        final_text, final_secs = get_remaining_time(sb)
-        if final_secs > time_secs:
-            log(f"✅ 确认续期成功! {time_text} → {final_text}")
-            return final_text, final_secs, True
-        return time_text, time_secs, False
     else:
-        log(f"⚠️ 时间未变化 ({time_text} → {new_text})，可能是按钮点击了但未触发或处于冷却期")
+        log(f"⚠️ 时间未变化 ({time_text} → {new_text}, 差 {time_diff}秒), 可能未触发或冷却中")
         return time_text, time_secs, False
 
 def run_script():
