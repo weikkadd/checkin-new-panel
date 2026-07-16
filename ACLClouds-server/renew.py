@@ -129,11 +129,14 @@ def api_post(session, path, payload=None):
 
 
 def list_servers(session):
-    r = api_get(session, "/api/client/servers")
+    # ACLClouds 用 GET /api/client (不是 /api/client/servers) 列服务器
+    # 响应: { data: [ { object: "server", attributes: {...} } ], meta: {...} }
+    r = api_get(session, "/api/client")
     r.raise_for_status()
     j = r.json()
-    # Pelican 标准: { data: [ { attributes: {...} } ] }
-    return j.get("data", []) if isinstance(j, dict) else j
+    if isinstance(j, dict):
+        return j.get("data", [])
+    return j if isinstance(j, list) else []
 
 
 def server_detail(session, sid):
@@ -171,7 +174,17 @@ def find_expire(attrs, detail=None):
 
 
 def renew_server(session, sid):
-    return api_post(session, f"/api/client/servers/{sid}/upgrade/renew")
+    """调用续期 API, 返回 (response, captcha_required_bool)"""
+    r = api_post(session, f"/api/client/servers/{sid}/upgrade/renew")
+    captcha_required = False
+    if r.status_code == 403:
+        try:
+            j = r.json()
+            if isinstance(j, dict) and j.get("code") == "captcha_required":
+                captcha_required = True
+        except Exception:
+            pass
+    return r, captcha_required
 
 
 # ==================== 单账号续期流程 ====================
@@ -243,7 +256,7 @@ def process_account(label, cookie_str):
 
         # 续期
         try:
-            r = renew_server(session, sid)
+            r, captcha_required = renew_server(session, sid)
         except Exception as e:
             results.append(f"❌ {name}: 请求异常 {e}")
             failed += 1
@@ -263,6 +276,10 @@ def process_account(label, cookie_str):
             results.append(f"✅ {name}: {remaining_fmt} → {new_fmt}")
             renewed += 1
             log(f"✅ 续期成功: {remaining_fmt} → {new_fmt}")
+        elif captcha_required:
+            results.append(f"🛡️ {name}: 需要 Turnstile 验证 (纯 API 无法通过, 跳过)")
+            failed += 1
+            log(f"🛡️ {name}: 需要 Turnstile, 纯 API 无法通过")
         else:
             body = ""
             try:
