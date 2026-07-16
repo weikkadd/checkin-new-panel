@@ -3,7 +3,6 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '0 1 * * *'
-
 jobs:
   renew:
     runs-on: ubuntu-latest
@@ -11,7 +10,6 @@ jobs:
     permissions:
       actions: write
       contents: read
-
     steps:
       - name: 📥 拉取代码
         uses: actions/checkout@v4
@@ -72,11 +70,12 @@ jobs:
           echo "代理状态: IS_PROXY=${IS_PROXY:-false}, PROXY_SERVER=${PROXY_SERVER:-无}"
           xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python renew.py
 
+      # 【修复】上传路径改为 debug_output/, 与脚本中的 SCREENSHOT_DIR 一致
       - name: 📸 上传截图
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: debug-screenshots
-          path: gaming4free-renew/*.png
-          if-no-files-found: ignore
+          path: gaming4free-renew/debug_output/
+          if-no-files-found: warn
           retention-days: 3
