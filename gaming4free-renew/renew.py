@@ -533,59 +533,90 @@ def main():
                             """)
                             log(f"🎯 JS点击结果: {js_result}")
 
-                        time.sleep(3)  # 给 Livewire 足够响应时间
-
-                        # 【关键修复】点击后检查是否弹出 Cloudflare Turnstile 验证码
-                        log("🛡️ 检查是否需要通过人机验证...")
+                        # 【关键修复】点击 +90 分钟后等待 CF Turnstile 弹出并自动处理
+                        log("🛡️ 等待可能的 Cloudflare Turnstile 弹窗...")
                         ts_handled = False
-                        for ts_attempt in range(5):
+
+                        # Turnstile 通常在点击后 1-3 秒才出现，先等够时间
+                        time.sleep(5)
+
+                        # 用多种方式检测 Turnstile 是否存在
+                        def check_turnstile_present(sb):
+                            """综合检测 Turnstile 验证码是否弹出"""
+                            checks = [
+                                # iframe 方式 - Cloudflare Challenge URL
+                                """document.querySelector('iframe[src*=\"challenges.cloudflare.com\"]")""",
+                                # div class 方式
+                                """document.querySelector('.cf-turnstile, [class*=\"turnstile-\"]")""",
+                                # data-src 方式
+                                """document.querySelector('iframe[data-src*=\"turnstile\"]")""",
+                                # aria-label 方式
+                                """document.querySelector('[aria-label=\"Security verification\"]")""",
+                            ]
+                            for chk in checks:
+                                try:
+                                    result = sb.execute_script(f"return {chk};")
+                                    if result:
+                                        return True
+                                except:
+                                    pass
+                            return False
+
+                        if check_turnstile_present(sb):
+                            log("⏳ 检测到 Cloudflare Turnstile 弹窗！")
+                            screenshot(sb, "turnstile-detected")
+
+                            # 方法1: 尝试找到 iframe 内的 checkbox 并点击
+                            click_success = False
                             try:
-                                has_cf = sb.execute_script("""
-                                    return !!document.querySelector('iframe[src*="cloudflare"]') 
-                                        || !!document.querySelector('div[data-testid="turnstile-widget"]')
-                                        || !!document.querySelector('[class*="turnstile"]');
+                                # 查找 Turnstile checkbox 容器
+                                sb.execute_script("""
+                                    // 寻找所有可能的 checkbox 元素
+                                    var containers = document.querySelectorAll(
+                                        '.cf-turnstile > div, '
+                                        '[class*="turnstile-box"], '
+                                        '[class*="challenge-core-bg"], '
+                                        '[class*="expires-container"]'
+                                    );
+                                    for (var c = 0; c < containers.length; c++) {
+                                        var spans = containers[c].querySelectorAll('span[role="checkbox"]');
+                                        if (spans.length > 0) {
+                                            spans[0].click();
+                                            console.log('Clicked checkbox');
+                                            break;
+                                        }
+                                    }
+                                    // 如果没有找到 span checkbox，尝试直接点击容器
+                                    if (containers.length > 0) {
+                                        containers[0].click();
+                                        console.log('Clicked container');
+                                    }
                                 """)
-                                if has_cf:
-                                    log(f"⏳ 检测到 Cloudflare Turnstile (第 {ts_attempt+1} 次)")
-                                    screenshot(sb, f"turnstile-after-click-{ts_attempt}")
+                                log("🤖 已发送点击指令到 Turnstile checkbox")
+                                time.sleep(1)
 
-                                    # 尝试用 uc_gui_click_captcha 自动点选（需要 UC 模式支持）
-                                    # 由于我们 uc=False，改用 JS 模拟完成验证
-                                    cf_result = sb.execute_script("""
-                                        // 尝试查找并点击 Turnstile checkbox
-                                        var checkboxes = document.querySelectorAll('.tc-expansion-area, .tf-cp, [class*="checkbox"]');
-                                        for (var i = 0; i < checkboxes.length; i++) {
-                                            checkboxes[i].click();
-                                        }
-                                        // 或者直接触发 turnstile callback
-                                        if (window.turnstile && window.turnstile.getResponse) {
-                                            return window.turnstile.getResponse();
-                                        }
-                                        return 'manual';
-                                    """)
-                                    log(f"🤖 Turnstile 处理方式: {cf_result}")
+                                # 检查 Turnstile 是否消失（验证通过标志）
+                                for verify_i in range(15):
+                                    time.sleep(1)
+                                    still_there = check_turnstile_present(sb)
+                                    if not still_there:
+                                        log(f"✅ Turnstile 验证已通过 (耗时{verify_i+1}秒)")
+                                        click_success = True
+                                        ts_handled = True
+                                        break
+                                    elif verify_i % 3 == 0:
+                                        log(f"⏳ 验证进行中... ({verify_i+1}/15秒)")
 
-                                    # 等待验证通过（最多10秒）
-                                    for wait_i in range(10):
-                                        time.sleep(1)
-                                        still_has_cf = sb.execute_script("""
-                                            return !!document.querySelector('iframe[src*="cloudflare"]');
-                                        """)
-                                        if not still_has_cf:
-                                            log(f"✅ Turnstile 验证已通过 (耗时{wait_i+1}秒)")
-                                            ts_handled = True
-                                            break
-                                    else:
-                                        log("⚠️ Turnstile 自动验证超时，可能需要手动干预")
-                                else:
-                                    log("✅ 无需人机验证，继续下一步")
-                                    break
-                            except Exception as e_ts:
-                                log(f"⚠️ Turnstile 检测异常: {e_ts}")
-                                break
+                                if not click_success:
+                                    log("⚠️ Turnstile 验证超时未完成")
 
-                        if not ts_handled:
-                            log("ℹ️ 未检测到 Turnstile，直接进入广告流程")
+                            except Exception as e_tc:
+                                log(f"⚠️ Turnstile 处理异常: {e_tc}")
+                                screenshot(sb, "turnstile-error")
+                        else:
+                            log("✅ 未检测到 Turnstile 弹窗，继续下一步")
+                            ts_handled = True
+                        # 无论是否处理了 Turnstile，都给 Livewire 一些时间处理续期请求
                     except Exception as e:
                         log(f"⚠️ 首次点击失败: {e}")
                         screenshot(sb, "点击失败截图")
