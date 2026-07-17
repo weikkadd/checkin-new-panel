@@ -20,35 +20,28 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Install Chrome with browser-actions
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+        id: chrome
+
       - name: Install system dependencies
         run: |
           sudo apt-get update -q
           sudo apt-get install -y \
-            xvfb xdotool wget unzip \
+            xvfb xdotool wget \
             libnss3 libatk1.0-0 libatk-bridge2.0-0 \
             libcups2 libdrm2 libxkbcommon0 \
             libxcomposite1 libxrandr2 libgbm1 \
             libpango-1.0-0 libcairo2 fonts-liberation
 
-      - name: Install Chrome and Chromedriver
+      - name: Verify Chrome and Chromedriver
         run: |
-          CHROME_VERSION="124.0.6367.91"
-          echo "[INFO] Chrome version: $CHROME_VERSION"
-          
-          CHROME_URL="https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip"
-          wget --timeout=60 "$CHROME_URL" -O /tmp/chrome.zip || exit 1
-          unzip -q /tmp/chrome.zip -d /opt/
-          sudo cp /opt/chrome-linux64/chrome /usr/bin/google-chrome
-          sudo chmod +x /usr/bin/google-chrome
-          
-          CHROMEDRIVER_URL="https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip"
-          wget --timeout=60 "$CHROMEDRIVER_URL" -O /tmp/chromedriver.zip || exit 1
-          unzip -q /tmp/chromedriver.zip -d /opt/
-          sudo cp /opt/chromedriver-linux64/chromedriver /usr/local/bin/
-          sudo chmod +x /usr/local/bin/chromedriver
-          
-          echo "[INFO] Chrome: $(/usr/bin/google-chrome --version)"
+          echo "[INFO] Chrome: $(google-chrome --version)"
+          echo "[INFO] Chrome path: $(which google-chrome)"
           echo "[INFO] Chromedriver: $(chromedriver --version)"
+          echo "[INFO] Chromedriver path: $(which chromedriver)"
 
       - name: Install Python dependencies
         working-directory: gaming4free-renew
@@ -76,14 +69,6 @@ jobs:
             echo "PROXY_SERVER=" >> $GITHUB_ENV
           fi
 
-      - name: Verify proxy
-        run: |
-          if [ "${IS_PROXY}" = "true" ]; then
-            curl -x "$PROXY_SERVER" -s --max-time 10 https://api.ipify.org && echo
-          else
-            curl -s --max-time 10 https://api.ipify.org && echo
-          fi
-
       - name: Run renewal script
         env:
           PYTHONIOENCODING: utf-8
@@ -93,6 +78,10 @@ jobs:
           GAME4FREE_COOKIE: ${{ secrets.GAME4FREE_COOKIE }}
           IS_PROXY: ${{ env.IS_PROXY }}
           PROXY_SERVER: ${{ env.PROXY_SERVER }}
+          # 修复: 禁用 SeleniumBase 自动下载 Chromedriver
+          SB_SKIP_DRIVER_UPDATE: "true"
+          # 指定 Chrome 路径
+          CHROME_BIN: /opt/hostedtoolcache/bin/google-chrome
         working-directory: gaming4free-renew
         run: |
           xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python renew.py
