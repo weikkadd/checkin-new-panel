@@ -501,24 +501,19 @@ def main():
                         except Exception as e:
                             log(f"⚠️ sb.click() 失败: {e}")
 
-                    # 策略2: driver.findElement + JavaScript click（绕过 sb.click 的参数限制）
+                    # 策略2: JS 查找并点击含 "90" 的按钮（最可靠的方式）
                     if not click_done:
                         try:
-                            log("📍 尝试 driver.findElements + JS click...")
+                            log("📍 尝试 JS 查找+点击...")
                             js_result = sb.execute_script("""
-                                var allBtns = document.querySelectorAll('button');
-                                for (var i = 0; i < allBtns.length; i++) {
-                                    var text = (allBtns[i].textContent || '').trim();
+                                var btns = document.querySelectorAll('button');
+                                for (var i = 0; i < btns.length; i++) {
+                                    var text = (btns[i].textContent || '').trim();
                                     if (text.indexOf('90') !== -1) {
-                                        // 确保按钮可见且可交互
-                                        allBtns[i].style.pointerEvents = 'auto';
-                                        allBtns[i].style.visibility = 'visible';
-                                        allBtns[i].style.opacity = '1';
-                                        allBtns[i].removeAttribute('disabled');
-                                        allBtns[i].classList.remove('opacity-50', 'cursor-not-allowed');
-
-                                        // scrollIntoView
-                                        allBtns[i].scrollIntoView({behavior: 'instant', block: 'center'});
+                                        // 清除所有阻止交互的样式
+                                        btns[i].style.cssText += '; pointer-events:auto !important; visibility:visible !important; opacity:1 !important;';
+                                        btns[i].removeAttribute('disabled');
+                                        btns[i].className = btns[i].className.replace(/\b(opacity-50|cursor-not-allowed|pointer-events-none)\b/g, '');
 
                                         // 获取 Alpine.js / Livewire 绑定的数据
                                         var root = allBtns[i];
@@ -540,29 +535,20 @@ def main():
                                             || allBtns[i].hasAttribute('@click')
                                             || allBtns[i].hasAttribute('x-on:click');
 
-                                        // 如果有 Livewire 绑定，先触发 livewire 事件再 click
+                                        // 记录 Livewire 事件名供调试
+                                        var eventName = '';
                                         if (hasWireClick) {
-                                            // 手动触发 Livewire 的 dispatchEvent
-                                            var eventName = null;
                                             if (allBtns[i].hasAttribute('wire:click')) {
                                                 eventName = allBtns[i].getAttribute('wire:click');
                                             } else if (allBtns[i].hasAttribute('@click')) {
-                                                eventName = allBtns[i].getAttribute('@click').replace(/'/g,'').replace(/"/g,'');
+                                                eventName = allBtns[i].getAttribute('@click');
                                             }
-
-                                            if (eventName) {
-                                                console.log('Found Livewire event:', eventName);
-                                                // 通过 Livewire 组件发送事件
-                                                var component = window.Livewire ? window.Livewire.find(allBtns[i].closest('[wire:id]').getAttribute('wire:id')) : null;
-                                                if (component) {
-                                                    component.dispatch(event => { /* no-op */ });
-                                                }
-                                            }
+                                            console.log('Livewire wire:click = ' + eventName);
                                         }
 
                                         // 最后直接调用原生 click
                                         allBtns[i].click();
-                                        return 'clicked:' + text.substring(0,20) + '|wire:' + hasWireClick + '|' + (eventName||'none');
+                                        return 'clicked:' + text.substring(0,20);
                                     }
                                 }
                                 return 'not-found';
