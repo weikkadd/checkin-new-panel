@@ -479,52 +479,79 @@ def main():
 
                     log("🖱️ 正在寻找并点击 +90 分钟续期按钮...")
 
-                    # 获取页面全文检查按钮是否存在
-                    page_text = sb.execute_script("return document.body?document.body.innerText:'';")
-                    has_btn = '+90' in page_text or 'watch ad' in page_text.lower()
-                    log(f"🔍 页面包含续期相关内容: {has_btn}")
-
+                    # 策略1: SeleniumBase movement_click (带鼠标轨迹，最接近真人操作)
                     click_done = False
                     try:
-                        # scrollIntoView + 原生 click() on button containing '90'
-                        log("📍 策略1: scrollIntoView + 原生 click()")
-                        result = sb.execute_script("""
-                            var allBtns = document.querySelectorAll('button');
-                            for (var i = 0; i < allBtns.length; i++) {
-                                var text = (allBtns[i].textContent || '').trim();
-                                if (text.indexOf('90') !== -1 || text.toLowerCase().indexOf('watch ad') !== -1) {
-                                    allBtns[i].scrollIntoView({behavior: 'instant', block: 'center'});
-                                    allBtns[i].style.pointerEvents = 'auto';
-                                    allBtns[i].style.visibility = 'visible';
-                                    allBtns[i].click();
-                                    console.log('Clicked: ' + text);
-                                    return 'clicked:' + text;
-                                }
-                            }
-                            return 'not-found';
-                        """)
-                        log(f"🎯 点击结果: {result}")
+                        log("📍 尝试 movement_click...")
+                        elem = sb.find_element('//button[contains(text(), "+90")] | //button[contains(text(), "90 min")]', timeout=10)
+                        elem.location_once_scrolled_into_view
+                        sb.movement_click(elem)
+                        log("✅ movement_click 成功")
                         click_done = True
+                    except Exception as e:
+                        log(f"⚠️ movement_click 失败: {e}")
 
-                    except Exception as e_js:
-                        log(f"⚠️ JS点击异常: {e_js}")
+                    # 策略2: sb.click() 标准点击
+                    if not click_done:
+                        try:
+                            log("📍 尝试 sb.click()...")
+                            sb.click('//button[contains(text(), "+90")] | //button[contains(text(), "90 min")]', timeout=5)
+                            log("✅ sb.click() 成功")
+                            click_done = True
+                        except Exception as e:
+                            log(f"⚠️ sb.click() 失败: {e}")
+
+                    # 策略3: dispatchEvent 模拟完整鼠标事件链
+                    if not click_done:
+                        try:
+                            log("📍 尝试 dispatchEvent...")
+                            js_result = sb.execute_script("""
+                                var btns = document.querySelectorAll('button');
+                                for (var i = 0; i < btns.length; i++) {
+                                    if ((btns[i].textContent || '').indexOf('90') !== -1) {
+                                        btns[i].scrollIntoView({block: 'center'});
+                                        ['mouseover','mouseenter','mousedown','mouseup','click'].forEach(function(evt){
+                                            btns[i].dispatchEvent(new MouseEvent(evt, {bubbles:true, cancelable:true, view:window}));
+                                        });
+                                        return 'dispatched';
+                                    }
+                                }
+                                return 'not-found';
+                            """)
+                            log(f"🎯 dispatchEvent 结果: {js_result}")
+                            if js_result == 'dispatched':
+                                click_done = True
+                        except Exception as e:
+                            log(f"⚠️ dispatchEvent 失败: {e}")
 
                     if not click_done:
-                        log("❌ 未找到任何含 '90' 的按钮")
-                        screenshot(sb, "no-button-js")
-                        send_tg("❌ 未找到续期按钮", server_name, before_text)
+                        log("❌ 所有点击策略均失败")
+                        screenshot(sb, "点击全部失败")
+                        send_tg("❌ 无法点击续期按钮", server_name, before_text)
                         continue
 
-                    # 点击后等待 Turnstile 弹窗
-                    log("📸 点击后截图记录状态...")
-                    time.sleep(2)
+                    # 点击后等待页面响应
+                    log("⏳ 等待页面响应 (最多10秒)...")
+                    responded = False
+                    for wi in range(10):
+                        time.sleep(1)
+                        page_after = sb.execute_script("return document.body?document.body.innerText:'';")
+                        match_new = re.search(r'(\d+:){2}\d+', page_after)
+                        if match_new:
+                            new_secs = parse_countdown_seconds(match_new.group(0))
+                            if new_secs > before_secs + 30:
+                                log(f"✅ 页面已响应！新时间: {match_new.group(0)}")
+                                responded = True
+                                break
+
+                    if not responded:
+                        log("ℹ️ 页面未在10秒内明显变化，继续检查 Turnstile...")
+
                     screenshot(sb, "after-click-pre-check")
 
                     # 检测并处理 Cloudflare Turnstile 弹窗
-                    log("🛡️ 等待可能的 Cloudflare Turnstile 弹窗...")
-
+                    log("🛡️ 检查 Turnstile...")
                     def check_turnstile_present():
-                        """综合检测 Turnstile 验证码是否弹出"""
                         return bool(sb.execute_script("""
                             return !!document.querySelector('iframe[src*="challenges.cloudflare.com"]')
                                 || !!document.querySelector('.cf-turnstile')
@@ -534,40 +561,33 @@ def main():
                         """))
 
                     if check_turnstile_present():
-                        log("⏳ 检测到 Cloudflare Turnstile 弹窗！")
+                        log("⏳ 检测到 Turnstile 弹窗！")
                         screenshot(sb, "turnstile-detected")
-
-                        # 查找并点击 Turnstile checkbox
                         sb.execute_script("""
-                            var turnstiles = document.querySelectorAll('.cf-turnstile > div, [class*="challenge-core-bg"]');
+                            var turnstiles = document.querySelectorAll('.cf-turnstile > div');
                             for (var t = 0; t < turnstiles.length; t++) {
                                 var boxes = turnstiles[t].querySelectorAll('span[role="checkbox"]');
                                 if (boxes.length > 0) { boxes[0].click(); break; }
                             }
                             if (turnstiles.length > 0) { turnstiles[0].click(); }
                         """)
-                        log("🤖 已发送点击指令到 Turnstile checkbox")
-
-                        # 轮询等待验证完成（最多15秒）
                         for vi in range(15):
                             time.sleep(1)
                             if not check_turnstile_present():
-                                log(f"✅ Turnstile 验证已通过 (耗时{vi+1}秒)")
+                                log(f"✅ Turnstile 验证已通过 ({vi+1}秒)")
                                 break
-                            elif vi % 3 == 0:
-                                log(f"⏳ 验证进行中... ({vi+1}/15秒)")
                         else:
                             log("⚠️ Turnstile 验证超时")
                             screenshot(sb, "turnstile-timeout")
                     else:
-                        log("✅ 未检测到 Turnstile 弹窗，继续下一步")
+                        log("✅ 未检测到 Turnstile")
 
                     live_text, res = wait_ad_flow(sb, before_secs)
                     if res['live_secs'] > before_secs + 60:
                         log(f"✅ 续期成功！新剩余时间: {live_text}")
                         send_tg("✅ 续期成功！", server_name, live_text)
                     else:
-                        log(f"❌ 续期失败或等待超时。当前时间: {live_text}")
+                        log(f"❌ 续期失败或超时。当前时间: {live_text}")
                         send_tg("❌ 续期失败", server_name, live_text)
 
             except RuntimeError as e:
