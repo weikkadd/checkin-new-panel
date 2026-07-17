@@ -513,100 +513,155 @@ def main():
                     time.sleep(2)
 
                     click_done = False
-                    # 策略1: 通过 CSS class 找按钮（rt-btn-free 是免费续期按钮）
-                    if not click_done:
-                        try:
-                            log("📍 策略1: 通过 .rt-btn-free 类名查找按钮...")
-                            elem = sb.find_element(By.CSS_SELECTOR, 'button.rt-btn-free', timeout=5)
-                            text = (elem.text or '').strip()
-                            log(f"   找到按钮文本: '{text}'")
-                            if '90' in text or 'extend' in text.lower():
-                                # 【关键修复】强制使按钮可交互
-                                sb.execute_script("""
-                                    arguments[0].style.cssText += '; pointer-events:auto !important; visibility:visible !important; opacity:1 !important; display:flex !important;';
-                                    arguments[0].removeAttribute('disabled');
-                                    arguments[0].className = arguments[0].className.replace(/\b(opacity-50|cursor-not-allowed|pointer-events-none|x-hidden)\b/g, '');
-                                    arguments[0].scrollIntoView({block:'center', behavior:'instant'});
-                                """, elem)
-                                time.sleep(0.5)
-                                # 检查是否有 wire:click
-                                has_lw = elem.get_attribute('wire:click') or ''
-                                log(f"   wire:click 属性: '{has_lw}'")
-                                if has_lw:
-                                    log(f"   ✅ 使用 Livewire API 调用: {has_lw}")
-                                    sb.execute_script(f"""
-                                        var comp = arguments[0];
-                                        while (comp && !comp.getAttribute('wire:id')) {{
-                                            comp = comp.parentElement;
-                                        }}
-                                        if (comp && window.Livewire) {{
-                                            var cid = comp.getAttribute('wire:id');
-                                            var c = window.Livewire.find(cid);
-                                            if (c) {{
-                                                c.call('{has_lw}');
-                                                return 'lw-called:' + '{has_lw}';
-                                            }}
-                                        }}
-                                        return 'no-lw-api';
-                                    """, elem)
-                                    click_done = True
-                                else:
-                                    elem.click()
-                                    click_done = True
-                            else:
-                                log(f"   ⚠️ rt-btn-free 不是续期按钮，跳过")
-                        except Exception as e:
-                            log(f"   ⚠️ 策略1失败: {e}")
 
-                    # 策略2: 通用 click 尝试
-                    if not click_done:
-                        try:
-                            log("📍 策略2: 直接 JavaScript .click()...")
-                            js_result = sb.execute_script("""
+                    # === 策略1: 通过 wire:click 属性定位按钮 + Livewire API 调用 ===
+                    try:
+                        log("📍 策略1: 查找带有 wire:click 属性的按钮...")
+
+                        # 使用 JavaScript 查找包含 "90" 且带有 wire:click 的按钮
+                        elem_data = sb.execute_script("""
+                            (function() {
                                 var btns = document.querySelectorAll('button');
                                 for (var i = 0; i < btns.length; i++) {
                                     var txt = (btns[i].textContent || '').trim();
                                     if ((txt.includes('+90') || txt.includes('90 min') || txt.includes('Extend')) 
-                                        && btns[i].offsetParent !== null) {
-                                        btns[i].scrollIntoView({block: 'center'});
-                                        // 清除可能的 disabled/pointer-events
-                                        btns[i].removeAttribute('disabled');
-                                        btns[i].style.pointerEvents = 'auto';
-                                        // 原生 click
-                                        btns[i].click();
-                                        return 'clicked:' + txt;
+                                        && btns[i].getAttribute('wire:click')) {
+
+                                        // 找到父级 wire:id 容器
+                                        var comp = btns[i];
+                                        while (comp && !comp.getAttribute('wire:id')) {
+                                            comp = comp.parentElement;
+                                        }
+
+                                        return {
+                                            found: true,
+                                            text: txt,
+                                            wireClick: btns[i].getAttribute('wire:click'),
+                                            wireId: comp ? comp.getAttribute('wire:id') : null,
+                                            componentExists: !!window.Livewire
+                                        };
                                     }
                                 }
-                                return 'not-found-any-button';
-                            """)
-                            log(f"🎯 JS click 结果: {js_result}")
-                            if 'clicked:' in js_result:
-                                click_done = True
-                        except Exception as e:
-                            log(f"⚠️ 策略2失败: {e}")
+                                return { found: false };
+                            })();
+                        """)
 
-                    # 策略3: dispatch livewire:submit 事件
+                        log(f"   🔍 按钮数据: {elem_data}")
+
+                        if elem_data and elem_data.get('found'):
+                            wire_id = elem_data.get('wireId')
+                            wire_method = elem_data.get('wireClick')
+
+                            if wire_id and wire_method:
+                                log(f"   ✅ 找到 wire:id={wire_id}, wire:click={wire_method}")
+
+                                # 方式 A: 直接使用 Livewire.find().call()
+                                try:
+                                    result = sb.execute_script(f"""
+                                        if (window.Livewire) {{
+                                            try {{
+                                                var component = window.Livewire.find('{wire_id}');
+                                                if (component) {{
+                                                    component.call('{wire_method}');
+                                                    return 'success:called-' + '{wire_method}';
+                                                }}
+                                                return 'fail:no-component';
+                                            }} catch(e) {{
+                                                return 'error:' + e.message;
+                                            }}
+                                        }}
+                                        return 'fail:no-livewire';
+                                    """)
+                                    log(f"   🎯 Livewire API 结果: {result}")
+
+                                    if 'success:' in str(result):
+                                        click_done = True
+                                        log("   ✅ 策略1成功！")
+                                    else:
+                                        log(f"   ⚠️ 策略1部分失败: {result}")
+                                except Exception as e:
+                                    log(f"   ⚠️ 策略1执行异常: {e}")
+                            else:
+                                log(f"   ⚠️ 缺少 wire_id 或 wire_method")
+                        else:
+                            log(f"   ⚠️ 未找到带 wire:click 的按钮")
+
+                    except Exception as e:
+                        log(f"   ⚠️ 策略1整体失败: {e}")
+
+                    # === 策略2: dispatch livewire:submit 事件 ===
                     if not click_done:
                         try:
-                            log("📍 策略3: Livewire submit 事件...")
-                            lw_result = sb.execute_script("""
-                                var components = window.Livewire ? window.Livewire.all() : [];
-                                for (var c = 0; c < components.length; c++) {
-                                    try {
-                                        // 尝试常见的方法名
-                                        ['extendServer', 'extend', 'renew', 'refreshTime'].forEach(function(method) {
-                                            try {
-                                                components[c].call(method);
-                                                console.log('Called: ' + method);
-                                                return method;
-                                            } catch(e) {}
-                                        });
-                                    } catch(e) {}
+                            log("📍 策略2: dispatch livewire:submit 事件...")
+
+                            # 先找到按钮元素
+                            elem = sb.find_element(By.CSS_SELECTOR, 'button[wire|="click"]', timeout=5)
+                            sb.execute_script("arguments[0].scrollIntoView({block:'center'});", elem)
+
+                            # 获取 wire:click 值
+                            wire_click_value = elem.get_attribute('wire:click')
+                            log(f"   wire:click 值: {wire_click_value}")
+
+                            # 构造 livewire:submit 事件
+                            js_code = """
+                                var btn = arguments[0];
+                                var wireClickValue = arguments[1];
+
+                                // 确保按钮可交互
+                                btn.style.pointerEvents = 'auto';
+                                btn.removeAttribute('disabled');
+
+                                // 创建 livewire:submit 事件
+                                var submitEvent = new CustomEvent('livewire:submit', {
+                                    bubbles: true,
+                                    cancelable: true,
+                                    detail: {
+                                        component: { 
+                                            id: btn.closest('[wire:id]')?.getAttribute('wire:id'),
+                                            snapshot: {}, memo: {}, entangle: function() {} 
+                                        },
+                                        methods: [wireClickValue],
+                                        params: [], commit: {}
+                                    }
+                                });
+
+                                // 依次派发 mousedown, mouseup, click 和 livewire:submit
+                                ['mousedown','mouseup','click'].forEach(function(type){
+                                    btn.dispatchEvent(new MouseEvent(type, {
+                                        bubbles: true, cancelable: true, view: window
+                                    }));
+                                });
+
+                                btn.dispatchEvent(submitEvent);
+                                return 'events-dispatched';
+                            """
+                            result = sb.execute_script(js_code, elem, wire_click_value)
+                            log(f"   🎯 事件分发结果: {result}")
+                            click_done = True
+                            time.sleep(1)
+
+                        except Exception as e:
+                            log(f"   ⚠️ 策略2失败: {e}")
+
+                    # === 策略3: 纯 JS .click() 兜底 ===
+                    if not click_done:
+                        try:
+                            log("📍 策略3: 纯 JS .click() 兜底...")
+                            js_result = sb.execute_script("""
+                                var btns = document.querySelectorAll('button');
+                                for (var i = 0; i < btns.length; i++) {
+                                    if ((btns[i].textContent || '').indexOf('90') !== -1) {
+                                        btns[i].scrollIntoView({block: 'center'});
+                                        btns[i].removeAttribute('disabled');
+                                        btns[i].style.cssText += '; pointer-events:auto !important;';
+                                        btns[i].click();
+                                        return 'native-clicked:' + (btns[i].textContent || '').trim();
+                                    }
                                 }
-                                return 'no-match';
+                                return 'not-found';
                             """)
-                            log(f"🎯 Livewire API 结果: {lw_result}")
-                            if lw_result != 'no-match':
+                            log(f"🎯 兜底 click 结果: {js_result}")
+                            if 'native-clicked' in js_result:
                                 click_done = True
                         except Exception as e:
                             log(f"⚠️ 策略3失败: {e}")
@@ -615,6 +670,8 @@ def main():
                         log("❌ 所有点击策略均失败")
                         screenshot(sb, "点击全部失败")
                         send_tg("❌ 无法点击续期按钮", server_name, before_text)
+                        continue
+
                         continue
                     # 点击后等待页面响应
                     log("⏳ 等待页面响应 (最多10秒)...")
