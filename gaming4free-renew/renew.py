@@ -261,7 +261,17 @@ def wait_ad_flow(sb, before_secs, max_wait=AD_WAIT_SEC):
                 WebDriverWait(sb.driver, 10).until(
                     EC.element_to_be_clickable((By.XPATH, "//button[contains(., '+ 90 min')] | //button[contains(., 'watch ad')] | //button[contains(., 'Watch Ad')] | //button[contains(., 'Watch ad')] "))
                 )
-                sb.uc_click("button:contains('+ 90 min')", reconnect_time=4)
+                # 使用标准点击方式 (uc=False 时没有 uc_click)
+                btn_xpath = "//button[contains(., '+ 90 min')] | //button[contains(., 'watch ad')] | //button[contains(., 'Watch Ad')] | //button[contains(., 'Watch ad')]"
+                try:
+                    elem2 = sb.find_element(btn_xpath, timeout=5)
+                    sb.execute_script("""arguments[0].dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, view: window}));""", elem2)
+                    time.sleep(0.1)
+                    sb.execute_script("""arguments[0].dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, view: window}));""", elem2)
+                    time.sleep(0.1)
+                    sb.execute_script("""arguments[0].dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));""", elem2)
+                except Exception:
+                    pass
                 log("🎯 第二次点击已完成")
             except Exception as e:
                 log(f"⚠️ 第二次点击异常: {e}")
@@ -452,7 +462,16 @@ def main():
                         WebDriverWait(sb.driver, 10).until(
                             EC.element_to_be_clickable((By.XPATH, "//button[contains(., '+ 90 min')] | //button[contains(., 'watch ad')] | //button[contains(., 'Watch Ad')] | //button[contains(., 'Watch ad')] "))
                         )
-                        sb.uc_click("button:contains('+ 90 min')", reconnect_time=4)
+                        # 使用标准点击方式 (uc=False 时没有 uc_click)
+                        btn_xpath = "//button[contains(., '+ 90 min')] | //button[contains(., 'watch ad')] | //button[contains(., 'Watch Ad')] | //button[contains(., 'Watch ad')]"
+                        elem = sb.find_element(btn_xpath, timeout=10)
+                        # 先执行 JS 模拟完整鼠标事件，绕过 livewire 检测
+                        sb.execute_script("""arguments[0].dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, view: window}));""", elem)
+                        time.sleep(0.1)
+                        sb.execute_script("""arguments[0].dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, view: window}));""", elem)
+                        time.sleep(0.1)
+                        sb.execute_script("""arguments[0].dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));""", elem)
+                        log("🎯 首次点击续期按钮已完成 (JS模拟)")
                         log("🎯 首次点击续期按钮已完成")
                     except Exception as e:
                         log(f"⚠️ 首次点击失败: {e}")
