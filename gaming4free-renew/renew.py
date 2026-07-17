@@ -256,26 +256,68 @@ def wait_ad_flow(sb, before_secs, max_wait=AD_WAIT_SEC):
             screenshot(sb, "ad-showing")
         if result['reward_ready'] and not clicked_again:
             clicked_again = True
-            log("🖱️ 广告奖励已就绪, 再次点击 +90 分钟以触发真正续期...")
+            log("🖱️ 广告奖励已就绪, 等待冷却结束并再次点击...")
+
+            # 【新增】检测按钮是否在冷却中，等待冷却完成
+            for ci in range(300):  # 最多等 5 分钟
+                cooldown_info = check_button_cooldown(sb)
+                if cooldown_info and cooldown_info.get('cooldown'):
+                    remaining = cooldown_info.get('remaining', '?')
+                    log(f"   ⏳ 按钮冷却中，剩余 {remaining}秒")
+                    time.sleep(10)
+                    continue
+                else:
+                    log("✅ 按钮冷却已结束")
+                    break
+
+            # 第二次点击 — 使用 Livewire API
             try:
-                WebDriverWait(sb.driver, 10).until(
-                    EC.element_to_be_clickable((By.XPATH, "//button[contains(., '+ 90 min')] | //button[contains(., 'watch ad')] | //button[contains(., 'Watch Ad')] | //button[contains(., 'Watch ad')] "))
-                )
-                # 使用标准点击方式 (uc=False 时没有 uc_click)
-                btn_xpath = "//button[contains(., '+ 90 min')] | //button[contains(., 'watch ad')] | //button[contains(., 'Watch Ad')] | //button[contains(., 'Watch ad')]"
-                try:
-                    elem2 = sb.find_element(btn_xpath, timeout=5)
-                    sb.execute_script("""arguments[0].dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, view: window}));""", elem2)
-                    time.sleep(0.1)
-                    sb.execute_script("""arguments[0].dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, view: window}));""", elem2)
-                    time.sleep(0.1)
-                    sb.execute_script("""arguments[0].dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window}));""", elem2)
-                except Exception:
-                    pass
-                log("🎯 第二次点击已完成")
+                log("   📍 通过 Livewire API 触发续期...")
+                lw_result = sb.execute_script("""
+                    var components = window.Livewire ? window.Livewire.all() : [];
+                    for (var c = 0; c < components.length; c++) {
+                        var comp = components[c];
+                        // 尝试常见方法名
+                        ['extendServer', 'extend', 'renew', 'claimReward'].forEach(function(method) {
+                            try {
+                                comp.call(method);
+                                console.log('Called: ' + method);
+                                return method;
+                            } catch(e) {}
+                        });
+                    }
+                    return 'no-match';
+                """)
+
+                if lw_result != 'no-match':
+                    log(f"   ✅ Livewire 调用成功: {lw_result}")
+                else:
+                    # 兜底：直接找按钮点击
+                    log("   ⚠️ Livewire API 未找到匹配方法，尝试 DOM 点击...")
+                    try:
+                        elem2 = sb.find_element(By.CSS_SELECTOR, 'button.rt-btn-free, button[wire:click]', timeout=5)
+                        sb.execute_script("arguments[0].scrollIntoView({block:'center'});", elem2)
+                        time.sleep(0.5)
+                        has_lw = elem2.get_attribute('wire:click')
+                        if has_lw:
+                            sb.execute_script(f"""
+                                var el = arguments[0];
+                                while (el && !el.getAttribute('wire:id')) {{ el = el.parentElement; }}
+                                if (el && window.Livewire) {{
+                                    var cid = el.getAttribute('wire:id');
+                                    var c = window.Livewire.find(cid);
+                                    if (c) {{ c.call('{has_lw}'); return 'lw-called'; }}
+                                }}
+                                return 'fallback-click';
+                            """, elem2)
+                        else:
+                            elem2.click()
+                    except Exception as e:
+                        log(f"   ⚠️ 兜底点击也失败了: {e}")
+
             except Exception as e:
                 log(f"⚠️ 第二次点击异常: {e}")
-            time.sleep(3)
+            time.sleep(5)
             continue
         if result['ad_seen'] and ad_first_seen:
             try_ad_controls(sb, time.time() - ad_first_seen)
