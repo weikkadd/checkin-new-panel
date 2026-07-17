@@ -34,22 +34,20 @@ jobs:
           CHROME_VERSION="124.0.6367.91"
           echo "[INFO] Chrome 版本: $CHROME_VERSION"
           
-          mkdir -p /tmp/chrome-setup
-          
-          # 下载 Chrome
+          # 下载 Chrome (注意: 解压后文件名是 chrome, 不是 google-chrome)
           CHROME_URL="https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chrome-linux64.zip"
           echo "[INFO] 下载 Chrome..."
-          wget --timeout=60 "$CHROME_URL" -O /tmp/chrome-setup/chrome.zip || exit 1
-          unzip -q /tmp/chrome-setup/chrome.zip -d /tmp/chrome-setup/
-          sudo cp /tmp/chrome-setup/chrome-linux64/google-chrome /usr/bin/
+          wget --timeout=60 "$CHROME_URL" -O /tmp/chrome.zip || exit 1
+          unzip -q /tmp/chrome.zip -d /opt/
+          sudo cp /opt/chrome-linux64/chrome /usr/bin/google-chrome
           sudo chmod +x /usr/bin/google-chrome
           
           # 下载 Chromedriver
           CHROMEDRIVER_URL="https://storage.googleapis.com/chrome-for-testing-public/${CHROME_VERSION}/linux64/chromedriver-linux64.zip"
           echo "[INFO] 下载 Chromedriver..."
-          wget --timeout=60 "$CHROMEDRIVER_URL" -O /tmp/chrome-setup/chromedriver.zip || exit 1
-          unzip -q /tmp/chrome-setup/chromedriver.zip -d /tmp/chrome-setup/
-          sudo cp /tmp/chrome-setup/chromedriver-linux64/chromedriver /usr/local/bin/
+          wget --timeout=60 "$CHROMEDRIVER_URL" -O /tmp/chromedriver.zip || exit 1
+          unzip -q /tmp/chromedriver.zip -d /opt/
+          sudo cp /opt/chromedriver-linux64/chromedriver /usr/local/bin/
           sudo chmod +x /usr/local/bin/chromedriver
           
           # 验证
