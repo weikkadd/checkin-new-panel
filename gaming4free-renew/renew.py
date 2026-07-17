@@ -478,150 +478,89 @@ def main():
                         continue
 
                     log("🖱️ 正在寻找并点击 +90 分钟续期按钮...")
+
+                    # 获取页面全文检查按钮是否存在
+                    page_text = sb.execute_script("return document.body?document.body.innerText:'';")
+                    has_btn = '+90' in page_text or 'watch ad' in page_text.lower()
+                    log(f"🔍 页面包含续期相关内容: {has_btn}")
+
+                    click_done = False
                     try:
-                        # 先获取页面全文检查按钮是否存在
-                        page_text = sb.execute_script("return document.body?document.body.innerText:'';")
-                        has_btn = '+90' in page_text or 'watch ad' in page_text.lower() or 'ad' in page_text.lower()
-                        log(f"🔍 页面包含续期相关内容: {has_btn}")
-
-                        if not has_btn:
-                            log("⚠️ 页面上没有找到续期按钮，截图保存并尝试刷新...")
-                            screenshot(sb, "no-button-found")
-                            sb.refresh()
-                            time.sleep(5)
-                            page_text2 = sb.execute_script("return document.body?document.body.innerText:'';")
-                            has_btn = '+90' in page_text2 or 'watch ad' in page_text2.lower()
-                            log(f"🔄 刷新后是否找到按钮: {has_btn}")
-
-                        # 方法1: 用 CSS selector 查找包含 "90" 的按钮
-                        btn_found = False
-                        try:
-                            elem = sb.find_element('button:contains("+90")', timeout=5)
-                            # 确保按钮可见且可交互
-                            sb.scroll_to_element(elem)
-                            elem.click()
-                            log("🎯 首次点击续期按钮完成 (CSS选择器)")
-                            btn_found = True
-                        except Exception as e1:
-                            log(f"⚠️ CSS选择器点击失败: {e1}")
-
-                        # 方法2: XPath 匹配多种按钮文字
-                        if not btn_found:
-                            try:
-                                xpath = '//button[contains(text(), "+90")] | //button[contains(text(), "90 min")] | //button[contains(text(), "Watch Ad")] | //button[contains(text(), "watch ad")] | //button[contains(@class, "btn-primary")]'
-                                elem2 = sb.find_element(xpath, timeout=5)
-                                sb.scroll_to_element(elem2)
-                                elem2.click()
-                                log("🎯 首次点击续期按钮完成 (XPath)")
-                                btn_found = True
-                            except Exception as e2:
-                                log(f"⚠️ XPath点击失败: {e2}")
-
-                        # 方法3: JS 终极方案 - 找所有含 "90" 文字的 button
-                        if not btn_found:
-                            log("⚠️ 尝试JS方式查找并点击...")
-                            js_result = sb.execute_script("""
-                                var btns = document.querySelectorAll('button');
-                                for (var i = 0; i < btns.length; i++) {
-                                    if ((btns[i].textContent || '').indexOf('90') !== -1) {
-                                        btns[i].scrollIntoView({block: 'center'});
-                                        setTimeout(() => btns[i].click(), 100);
-                                        return 'clicked';
-                                    }
+                        # scrollIntoView + 原生 click() on button containing '90'
+                        log("📍 策略1: scrollIntoView + 原生 click()")
+                        result = sb.execute_script("""
+                            var allBtns = document.querySelectorAll('button');
+                            for (var i = 0; i < allBtns.length; i++) {
+                                var text = (allBtns[i].textContent || '').trim();
+                                if (text.indexOf('90') !== -1 || text.toLowerCase().indexOf('watch ad') !== -1) {
+                                    allBtns[i].scrollIntoView({behavior: 'instant', block: 'center'});
+                                    allBtns[i].style.pointerEvents = 'auto';
+                                    allBtns[i].style.visibility = 'visible';
+                                    allBtns[i].click();
+                                    console.log('Clicked: ' + text);
+                                    return 'clicked:' + text;
                                 }
-                                return 'not-found';
-                            """)
-                            log(f"🎯 JS点击结果: {js_result}")
+                            }
+                            return 'not-found';
+                        """)
+                        log(f"🎯 点击结果: {result}")
+                        click_done = True
 
-                        # 【关键修复】点击 +90 分钟后等待 CF Turnstile 弹出并自动处理
-                        log("🛡️ 等待可能的 Cloudflare Turnstile 弹窗...")
-                        ts_handled = False
+                    except Exception as e_js:
+                        log(f"⚠️ JS点击异常: {e_js}")
 
-                        # Turnstile 通常在点击后 1-3 秒才出现，先等够时间
-                        time.sleep(5)
-
-                        # 用多种方式检测 Turnstile 是否存在
-                        def check_turnstile_present(sb):
-                            """综合检测 Turnstile 验证码是否弹出"""
-                            checks = [
-                                # iframe 方式 - Cloudflare Challenge URL
-                                """document.querySelector('iframe[src*=\"challenges.cloudflare.com\"]")""",
-                                # div class 方式
-                                """document.querySelector('.cf-turnstile, [class*=\"turnstile-\"]")""",
-                                # data-src 方式
-                                """document.querySelector('iframe[data-src*=\"turnstile\"]")""",
-                                # aria-label 方式
-                                """document.querySelector('[aria-label=\"Security verification\"]")""",
-                            ]
-                            for chk in checks:
-                                try:
-                                    result = sb.execute_script(f"return {chk};")
-                                    if result:
-                                        return True
-                                except:
-                                    pass
-                            return False
-
-                        if check_turnstile_present(sb):
-                            log("⏳ 检测到 Cloudflare Turnstile 弹窗！")
-                            screenshot(sb, "turnstile-detected")
-
-                            # 方法1: 尝试找到 iframe 内的 checkbox 并点击
-                            click_success = False
-                            try:
-                                # 查找 Turnstile checkbox 容器
-                                sb.execute_script("""
-                                    // 寻找所有可能的 checkbox 元素
-                                    var containers = document.querySelectorAll(
-                                        '.cf-turnstile > div, '
-                                        '[class*="turnstile-box"], '
-                                        '[class*="challenge-core-bg"], '
-                                        '[class*="expires-container"]'
-                                    );
-                                    for (var c = 0; c < containers.length; c++) {
-                                        var spans = containers[c].querySelectorAll('span[role="checkbox"]');
-                                        if (spans.length > 0) {
-                                            spans[0].click();
-                                            console.log('Clicked checkbox');
-                                            break;
-                                        }
-                                    }
-                                    // 如果没有找到 span checkbox，尝试直接点击容器
-                                    if (containers.length > 0) {
-                                        containers[0].click();
-                                        console.log('Clicked container');
-                                    }
-                                """)
-                                log("🤖 已发送点击指令到 Turnstile checkbox")
-                                time.sleep(1)
-
-                                # 检查 Turnstile 是否消失（验证通过标志）
-                                for verify_i in range(15):
-                                    time.sleep(1)
-                                    still_there = check_turnstile_present(sb)
-                                    if not still_there:
-                                        log(f"✅ Turnstile 验证已通过 (耗时{verify_i+1}秒)")
-                                        click_success = True
-                                        ts_handled = True
-                                        break
-                                    elif verify_i % 3 == 0:
-                                        log(f"⏳ 验证进行中... ({verify_i+1}/15秒)")
-
-                                if not click_success:
-                                    log("⚠️ Turnstile 验证超时未完成")
-
-                            except Exception as e_tc:
-                                log(f"⚠️ Turnstile 处理异常: {e_tc}")
-                                screenshot(sb, "turnstile-error")
-                        else:
-                            log("✅ 未检测到 Turnstile 弹窗，继续下一步")
-                            ts_handled = True
-                        # 无论是否处理了 Turnstile，都给 Livewire 一些时间处理续期请求
-                    except Exception as e:
-                        log(f"⚠️ 首次点击失败: {e}")
-                        screenshot(sb, "点击失败截图")
-                        send_tg("❌ 点击续期按钮失败", server_name, before_text)
+                    if not click_done:
+                        log("❌ 未找到任何含 '90' 的按钮")
+                        screenshot(sb, "no-button-js")
+                        send_tg("❌ 未找到续期按钮", server_name, before_text)
                         continue
+
+                    # 点击后等待 Turnstile 弹窗
+                    log("📸 点击后截图记录状态...")
+                    time.sleep(2)
+                    screenshot(sb, "after-click-pre-check")
+
+                    # 检测并处理 Cloudflare Turnstile 弹窗
+                    log("🛡️ 等待可能的 Cloudflare Turnstile 弹窗...")
+
+                    def check_turnstile_present():
+                        """综合检测 Turnstile 验证码是否弹出"""
+                        return bool(sb.execute_script("""
+                            return !!document.querySelector('iframe[src*="challenges.cloudflare.com"]')
+                                || !!document.querySelector('.cf-turnstile')
+                                || !!document.querySelector('[class*="turnstile-"]')
+                                || !!document.querySelector('[data-testid="turnstile-widget"]')
+                                || !!document.querySelector('[aria-label="Security verification"]');
+                        """))
+
+                    if check_turnstile_present():
+                        log("⏳ 检测到 Cloudflare Turnstile 弹窗！")
+                        screenshot(sb, "turnstile-detected")
+
+                        # 查找并点击 Turnstile checkbox
+                        sb.execute_script("""
+                            var turnstiles = document.querySelectorAll('.cf-turnstile > div, [class*="challenge-core-bg"]');
+                            for (var t = 0; t < turnstiles.length; t++) {
+                                var boxes = turnstiles[t].querySelectorAll('span[role="checkbox"]');
+                                if (boxes.length > 0) { boxes[0].click(); break; }
+                            }
+                            if (turnstiles.length > 0) { turnstiles[0].click(); }
+                        """)
+                        log("🤖 已发送点击指令到 Turnstile checkbox")
+
+                        # 轮询等待验证完成（最多15秒）
+                        for vi in range(15):
+                            time.sleep(1)
+                            if not check_turnstile_present():
+                                log(f"✅ Turnstile 验证已通过 (耗时{vi+1}秒)")
+                                break
+                            elif vi % 3 == 0:
+                                log(f"⏳ 验证进行中... ({vi+1}/15秒)")
+                        else:
+                            log("⚠️ Turnstile 验证超时")
+                            screenshot(sb, "turnstile-timeout")
+                    else:
+                        log("✅ 未检测到 Turnstile 弹窗，继续下一步")
 
                     live_text, res = wait_ad_flow(sb, before_secs)
                     if res['live_secs'] > before_secs + 60:
