@@ -501,98 +501,107 @@ def main():
                         except Exception as e:
                             log(f"⚠️ sb.click() 失败: {e}")
 
-                    # 策略2: 模拟真实人类鼠标点击 — 从远处移动到按钮位置再按下
+                    # 策略2: 先确保按钮可见，再用真实鼠标事件链点击
                     if not click_done:
                         try:
-                            log("📍 尝试模拟真实人类鼠标点击...")
+                            log("📍 策略2: 确保可见 + 完整鼠标事件链...")
                             js_result = sb.execute_script("""
                                 var btns = document.querySelectorAll('button');
                                 var targetBtn = null;
 
-                                // 先找到目标按钮
+                                // 找到目标按钮
                                 for (var i = 0; i < btns.length; i++) {
                                     var text = (btns[i].textContent || '').trim();
                                     if (text.indexOf('90') !== -1) {
                                         targetBtn = btns[i];
-
                                         // 清除阻止交互的样式
-                                        targetBtn.style.cssText += '; pointer-events:auto !important; visibility:visible !important; opacity:1 !important;';
+                                        targetBtn.style.cssText += '; pointer-events:auto !important; visibility:visible !important; opacity:1 !important; display:inline-flex !important;';
                                         targetBtn.removeAttribute('disabled');
-                                        targetBtn.className = targetBtn.className.replace(/\b(opacity-50|cursor-not-allowed|pointer-events-none)\b/g, '');
+                                        targetBtn.className = targetBtn.className.replace(/\\b(opacity-50|cursor-not-allowed|pointer-events-none|x-hidden)\\b/g, '');
                                         break;
                                     }
                                 }
 
                                 if (!targetBtn) return 'not-found';
 
-                                // 滚动到视口中间
-                                targetBtn.scrollIntoView({behavior: 'instant', block: 'center'});
+                                // 【关键】强制滚动到完全可见
+                                // 方法1: scrollIntoView
+                                targetBtn.scrollIntoView({behavior: 'auto', block: 'center', inline: 'center'});
 
-                                // 获取按钮中心坐标
+                                // 方法2: 如果还在视口外，手动调整父容器的 scrollTop/scrollLeft
                                 var rect = targetBtn.getBoundingClientRect();
+                                var attempts = 0;
+                                while ((rect.left < -50 || rect.top < -50 || rect.right > window.innerWidth + 50 || rect.bottom > window.innerHeight + 50) && attempts < 5) {
+                                    // 向上/左滚动父容器
+                                    var parent = targetBtn.parentElement;
+                                    while (parent && parent !== document.body) {
+                                        if (parent.scrollWidth > parent.clientWidth) {
+                                            parent.scrollLeft += (rect.left < 0) ? -100 : 100;
+                                        }
+                                        if (parent.scrollHeight > parent.clientHeight) {
+                                            parent.scrollTop += (rect.top < 0) ? -100 : 100;
+                                        }
+                                        parent = parent.parentElement;
+                                    }
+
+                                    void targetBtn.offsetHeight; // force reflow
+                                    rect = targetBtn.getBoundingClientRect();
+                                    attempts++;
+                                }
+
+                                // 最终确认可见
+                                rect = targetBtn.getBoundingClientRect();
+
+                                // 获取按钮中心坐标（相对于视口）
                                 var centerX = rect.left + rect.width / 2;
                                 var centerY = rect.top + rect.height / 2;
 
-                                // 模拟真实人类行为：从屏幕右下角缓慢移动到按钮上方
-                                var startX = window.innerWidth - 100;
-                                var startY = window.innerHeight - 100;
-
-                                // 创建随机偏移路径（人类不会走直线）
-                                var midX = (startX + centerX) / 2 + (Math.random() * 60 - 30);
-                                var midY = (startY + centerY) / 2 + (Math.random() * 60 - 30);
-
-                                // Step 1: mouseover at start position
-                                targetBtn.dispatchEvent(new MouseEvent('mouseover', {
-                                    bubbles: true, cancelable: true,
-                                    clientX: startX, clientY: startY, screenX: startX, screenY: startY, view: window
-                                }));
-
-                                // Step 2: mousemove along path (模拟移动轨迹)
-                                function moveAlongPath(points, delay) {
-                                    return new Promise(function(resolve) {
-                                        points.forEach(function(p, idx) {
-                                            setTimeout(function() {
-                                                targetBtn.dispatchEvent(new MouseEvent('mousemove', {
-                                                    bubbles: true, cancelable: true,
-                                                    clientX: p.x, clientY: p.y, screenX: Math.round(p.x * 1.5), screenY: Math.round(p.y * 1.5), view: window
-                                                }));
-                                            }, idx * delay);
+                                // 验证坐标是否在合理范围内
+                                if (centerX < -50 || centerX > window.innerWidth + 50) {
+                                    // 最后手段：直接 dispatch 事件到按钮本身
+                                    console.log('Button still off-screen, trying direct dispatch');
+                                    ['mousedown','mouseup','click'].forEach(function(type){
+                                        var e = new MouseEvent(type, {
+                                            bubbles: true, cancelable: true, view: window
                                         });
-                                        setTimeout(resolve, points.length * delay);
+                                        targetBtn.dispatchEvent(e);
                                     });
+                                    return 'direct-dispatch-attempted:center=(' + Math.round(centerX) + ',' + Math.round(centerY) + ')';
                                 }
 
-                                // 生成路径点
-                                var pathPoints = [
-                                    {x: startX, y: startY},
-                                    {x: midX, y: midY},
-                                    {x: centerX, y: centerY}
-                                ];
+                                // 正常流程：模拟真实鼠标事件链
+                                var startX = Math.min(window.innerWidth - 100, Math.max(100, centerX + 200));
+                                var startY = Math.min(window.innerHeight - 100, Math.max(100, centerY + 200));
 
-                                // Step 3: mousedown at button center
+                                // mouseenter/mouseover
+                                targetBtn.dispatchEvent(new MouseEvent('mouseenter', {bubbles: true, view: window}));
+                                targetBtn.dispatchEvent(new MouseEvent('mouseover', {
+                                    bubbles: true, clientX: startX, clientY: startY, view: window
+                                }));
+
+                                // mousemove toward button
+                                targetBtn.dispatchEvent(new MouseEvent('mousemove', {
+                                    bubbles: true, clientX: centerX, clientY: centerY, view: window
+                                }));
+
+                                // mousedown
                                 targetBtn.dispatchEvent(new MouseEvent('mousedown', {
                                     bubbles: true, cancelable: true, composed: true,
-                                    clientX: centerX, clientY: centerY, screenX: Math.round(centerX * 1.5), screenY: Math.round(centerY * 1.5),
+                                    clientX: centerX, clientY: centerY,
                                     button: 0, buttons: 1, view: window
                                 }));
 
-                                // Step 4: tiny random movement during hold (人类按住时会微抖)
-                                var microJitter = [
-                                    {dx: Math.random()*4-2, dy: Math.random()*4-2},
-                                    {dx: Math.random()*4-2, dy: Math.random()*4-2},
-                                    {dx: Math.random()*4-2, dy: Math.random()*4-2}
-                                ];
-                                microJitter.forEach(function(j, idx) {
-                                    setTimeout(function() {
-                                        targetBtn.dispatchEvent(new MouseEvent('mousemove', {
-                                            bubbles: true, cancelable: true,
-                                            clientX: centerX+j.dx, clientY: centerY+j.dy,
-                                            view: window
-                                        }));
-                                    }, 50 + idx*15);
-                                });
+                                // micro jitter during hold
+                                setTimeout(function() {
+                                    targetBtn.dispatchEvent(new MouseEvent('mousemove', {
+                                        bubbles: true,
+                                        clientX: centerX + Math.random()*4-2,
+                                        clientY: centerY + Math.random()*4-2,
+                                        view: window
+                                    }));
+                                }, 50);
 
-                                // Step 5: mouseup after realistic delay (human avg click hold: 80-150ms)
+                                // mouseup
                                 setTimeout(function() {
                                     targetBtn.dispatchEvent(new MouseEvent('mouseup', {
                                         bubbles: true, cancelable: true, composed: true,
@@ -600,22 +609,21 @@ def main():
                                         button: 0, buttons: 0, view: window
                                     }));
 
-                                    // Step 6: final click
+                                    // click
                                     targetBtn.dispatchEvent(new MouseEvent('click', {
                                         bubbles: true, cancelable: true, composed: true,
                                         clientX: centerX, clientY: centerY,
                                         button: 0, buttons: 0, view: window
                                     }));
-                                }, 100 + Math.random()*50);
+                                }, 120);
 
-                                return 'real-human-click-simulated:center=(' + Math.round(centerX) + ',' + Math.round(centerY) + ')';
+                                return 'mouse-chain-sent:center=(' + Math.round(centerX) + ',' + Math.round(centerY) + ')';
                             """)
-                            log(f"🎯 真实鼠标模拟结果: {js_result}")
-                            if 'real-human' in js_result:
+                            log(f"🎯 策略2结果: {js_result}")
+                            if 'direct-dispatch' in js_result or 'mouse-chain' in js_result:
                                 click_done = True
                         except Exception as e:
-                            log(f"⚠️ 真实鼠标模拟失败: {e}")
-
+                            log(f"⚠️ 策略2失败: {e}")
                     # 策略3: 最后用 JS click() 直接调用（绕过所有事件系统）
                     if not click_done:
                         try:
