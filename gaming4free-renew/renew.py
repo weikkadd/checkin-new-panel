@@ -501,28 +501,71 @@ def main():
                         except Exception as e:
                             log(f"⚠️ sb.click() 失败: {e}")
 
-                    # 策略3: dispatchEvent 模拟完整鼠标事件链
+                    # 策略2: 先用 sb.find_element + click()（SeleniumBase CSS 选择器）
                     if not click_done:
                         try:
-                            log("📍 尝试 dispatchEvent...")
+                            log("📍 尝试 sb.find_element + .click()...")
+                            # SeleniumBase 不支持复杂 XPath，用简单的 CSS 选择器
+                            elem = sb.find_element('button', timeout=5)
+                            # 遍历找到含 "90" 的那个
+                            found_elem = None
+                            elems = sb.driver.find_elements(By.TAG_NAME, 'button')
+                            for e in elems:
+                                if '90' in (e.text or ''):
+                                    found_elem = e
+                                    break
+
+                            if found_elem:
+                                sb.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", found_elem)
+                                time.sleep(0.3)
+                                # 使用 SeleniumBase 的 click 方法（会模拟完整鼠标事件）
+                                sb.click(found_elem)
+                                log("✅ find_element + sb.click() 成功")
+                                click_done = True
+                            else:
+                                log("⚠️ 未找到包含 '90' 的按钮元素")
+                        except Exception as e:
+                            log(f"⚠️ find_element 失败: {e}")
+
+                    # 策略3: 最后用 JS click() 直接调用（绕过所有事件系统）
+                    if not click_done:
+                        try:
+                            log("📍 尝试 JS 直接 click()...")
                             js_result = sb.execute_script("""
                                 var btns = document.querySelectorAll('button');
                                 for (var i = 0; i < btns.length; i++) {
                                     if ((btns[i].textContent || '').indexOf('90') !== -1) {
                                         btns[i].scrollIntoView({block: 'center'});
-                                        ['mouseover','mouseenter','mousedown','mouseup','click'].forEach(function(evt){
-                                            btns[i].dispatchEvent(new MouseEvent(evt, {bubbles:true, cancelable:true, view:window}));
-                                        });
-                                        return 'dispatched';
+                                        // 先检查是否有 Alpine.js / Livewire 绑定的事件
+                                        var alpineData = null;
+                                        var root = btns[i];
+                                        while (root && !alpineData) {
+                                            try {
+                                                if (window.Alpine && Alpine.$data) alpineData = Alpine.$data(root);
+                                                else if (root.__x && root.__x.$data) alpineData = root.__x.$data;
+                                            } catch(e) {}
+                                            if (!alpineData) root = root.parentElement;
+                                        }
+                                        if (alpineData) {
+                                            console.log('Found Alpine data with methods:', Object.keys(alpineData).slice(0,5));
+                                        }
+                                        // 清除可能阻止点击的样式
+                                        btns[i].style.pointerEvents = 'auto';
+                                        btns[i].style.visibility = 'visible';
+                                        btns[i].style.opacity = '1';
+                                        btns[i].removeAttribute('disabled');
+                                        // 直接调用原生 click
+                                        btns[i].click();
+                                        return 'clicked:' + (btns[i].textContent || '').trim().substring(0,20);
                                     }
                                 }
                                 return 'not-found';
                             """)
-                            log(f"🎯 dispatchEvent 结果: {js_result}")
-                            if js_result == 'dispatched':
+                            log(f"🎯 JS 点击结果: {js_result}")
+                            if 'clicked' in js_result:
                                 click_done = True
                         except Exception as e:
-                            log(f"⚠️ dispatchEvent 失败: {e}")
+                            log(f"⚠️ JS 点击异常: {e}")
 
                     if not click_done:
                         log("❌ 所有点击策略均失败")
