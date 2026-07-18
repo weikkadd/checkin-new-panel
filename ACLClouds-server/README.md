@@ -1,6 +1,6 @@
 # ACLClouds 自动续期
 
-为 [dash.aclclouds.com](https://dash.aclclouds.com/projects) 上的免费 Minecraft / VPS 服务器自动续期。
+为(https://aclclouds.com/dashboard/projects) 上的免费 Minecraft / VPS 服务器自动续期。
 
 ## 工作原理
 
