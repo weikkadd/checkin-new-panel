@@ -66,22 +66,13 @@ def screenshot(sb, name):
 def send_tg(result, server_name="", expiry=""):
     """【Pro】发送 Telegram 续期结果通知 - 详细格式"""
     if not TG_TOKEN or not TG_CHAT_ID: return
-    msg = f"""🎮 Gaming4Free Pro
-
-🖥服务器:
-{server_name}
-
-⏰时间:
-{now_str()}
-
-📊状态:
-{result}
-
-⏱剩余:
-{expiry}
-
-⚙️模式:
-Renew-Pro v10
+    # Mask email for privacy: show first 2 and last 2 chars
+    masked = server_name[:2] + '****' + server_name[-2:] if len(server_name) > 4 else server_name
+    msg = f"""🎮gaming4 续期通知
+⏰运行时间: {now_str()}
+🖥️账号: {masked}
+🔢剩余时间: {expiry}
+📊续期结果: {result}
 """
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
     data = urllib.parse.urlencode({"chat_id": TG_CHAT_ID, "text": msg}).encode()
