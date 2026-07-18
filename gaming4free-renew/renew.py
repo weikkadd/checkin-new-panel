@@ -371,7 +371,9 @@ def detect_page_stuck(sb):
         """)
         if not result: return True
         if result["ready"] != "complete": return True
-        if result["text"] < 50: return True
+        # Gaming4Free uses Livewire rendering; innerText can be small initially
+        # Only flag as stuck if text is truly empty (no meaningful content)
+        if result["text"] < 10: return True
         if not result["online"]: return True
         return False
     except Exception:
@@ -1004,7 +1006,8 @@ def wait_ad_flow(sb, before_secs, max_wait=AD_WAIT_SEC):
         elapsed = time.time() - t0
 
         # === Pro广告卡死检测 ===
-        if int(elapsed) % 20 == 0:
+        # Skip first 5 seconds to allow page to settle (avoid false positives from Livewire rendering)
+        if int(elapsed) >= 5 and int(elapsed) % 20 == 0:
             try:
                 if detect_page_stuck(sb):
                     log("⚠️ 检测到广告页面可能卡死")
