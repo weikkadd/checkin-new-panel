@@ -861,11 +861,44 @@ def main():
                         send_tg("❌ 无法点击续期按钮", server_name, before_text)
                         continue
 
-                    # 等待页面响应
-                    log("⏳ 等待页面响应 (最多10秒)...")
+                    # === Pro v10 增强: 实时监控页面响应与验证码 ===
+                    log("⏳ 正在监控页面响应与 Turnstile 验证碼 (最多 20 秒)...")
+                    
+                    def check_turnstile_present():
+                        return bool(sb.execute_script("""
+                            return !!document.querySelector('iframe[src*="challenges.cloudflare.com"]')
+                                || !!document.querySelector('.cf-turnstile')
+                                || !!document.querySelector('[class*="turnstile-"]')
+                                || !!document.querySelector('[data-testid="turnstile-widget"]')
+                                || !!document.querySelector('[aria-label="Security verification"]')
+                                || (document.body && document.body.innerText.includes("Verify you're human"));
+                        """))
+
                     responded = False
-                    for wi in range(10):
+                    for wi in range(20):
                         time.sleep(1)
+                        
+                        # 1. 优先检查并处理 Turnstile
+                        if check_turnstile_present():
+                            log(f"🛡️ [第 {wi+1} 秒] 实时检测到 Turnstile，立即处理...")
+                            screenshot(sb, "turnstile-realtime-detected")
+                            sb.execute_script("""
+                                var turnstiles = document.querySelectorAll('.cf-turnstile > div');
+                                for (var t = 0; t < turnstiles.length; t++) {
+                                    var boxes = turnstiles[t].querySelectorAll('span[role="checkbox"]');
+                                    if (boxes.length > 0) { boxes[0].click(); break; }
+                                }
+                                if (turnstiles.length > 0) { turnstiles[0].click(); }
+                                // 兜底: 尝试点击中心位置
+                                if (turnstiles.length === 0) {
+                                    var el = document.querySelector('iframe[src*="challenges.cloudflare.com"]') || document.querySelector('.cf-turnstile');
+                                    if (el) el.click();
+                                }
+                            """)
+                            # 处理完验证码后继续等待，不要直接 break
+                            continue
+
+                        # 2. 检查时间是否增加
                         page_after = sb.execute_script("return document.body?document.body.innerText:'';")
                         match_new = re.search(r'(\d+:){2}\d+', page_after)
                         if match_new:
@@ -874,43 +907,11 @@ def main():
                                 log(f"✅ 页面已响应！新时间: {match_new.group(0)}")
                                 responded = True
                                 break
+                    
                     if not responded:
-                        log("ℹ️ 页面未在10秒内明显变化，继续检查 Turnstile...")
-
-                    screenshot(sb, "after-click-pre-check")
-
-                    # 检测并处理 Cloudflare Turnstile 弹窗
-                    log("🛡️ 检查 Turnstile...")
-                    def check_turnstile_present():
-                        return bool(sb.execute_script("""
-                            return !!document.querySelector('iframe[src*="challenges.cloudflare.com"]')
-                                || !!document.querySelector('.cf-turnstile')
-                                || !!document.querySelector('[class*="turnstile-"]')
-                                || !!document.querySelector('[data-testid="turnstile-widget"]')
-                                || !!document.querySelector('[aria-label="Security verification"]');
-                        """))
-
-                    if check_turnstile_present():
-                        log("⏳ 检测到 Turnstile 弹窗！")
-                        screenshot(sb, "turnstile-detected")
-                        sb.execute_script("""
-                            var turnstiles = document.querySelectorAll('.cf-turnstile > div');
-                            for (var t = 0; t < turnstiles.length; t++) {
-                                var boxes = turnstiles[t].querySelectorAll('span[role="checkbox"]');
-                                if (boxes.length > 0) { boxes[0].click(); break; }
-                            }
-                            if (turnstiles.length > 0) { turnstiles[0].click(); }
-                        """)
-                        for vi in range(15):
-                            time.sleep(1)
-                            if not check_turnstile_present():
-                                log(f"✅ Turnstile 验证已通过 ({vi+1}秒)")
-                                break
-                        else:
-                            log("⚠️ Turnstile 验证超时")
-                            screenshot(sb, "turnstile-timeout")
-                    else:
-                        log("✅ 未检测到 Turnstile")
+                        log("ℹ️ 页面在 20 秒内未检测到时间显著变化")
+                    
+                    screenshot(sb, "after-click-status-check")
 
                     # === Pro v8: 点击后主动调用 Livewire ===
                     method = analyze_livewire(sb)
