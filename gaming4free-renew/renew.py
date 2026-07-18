@@ -213,6 +213,59 @@ def wait_ad_flow(sb, before_secs, max_wait=AD_WAIT_SEC):
     """等待广告流程完成，监控续期结果"""
     result = {'extend_seen': False, 'reward_ready': False, 'ad_seen': False, 'live_text': '', 'live_secs': 0}
     log(f"🎬 进入广告观看流程 (最长 {max_wait}秒, 期间不刷新页面)...")
+
+    # === 【调试】广告 DOM 检测 ===
+    try:
+        log("===== 广告DOM检测 =====")
+
+        # 检测 iframe
+        iframes = sb.execute_script("""
+            (function() {
+                var ifs = document.querySelectorAll('iframe');
+                var info = [];
+                for (var i = 0; i < ifs.length; i++) {
+                    info.push({
+                        index: i,
+                        src: ifs[i].src || '(no src)',
+                        width: ifs[i].offsetWidth,
+                        height: ifs[i].offsetHeight,
+                        visible: (ifs[i].offsetParent !== null)
+                    });
+                }
+                return JSON.stringify(info);
+            })();
+        """)
+        log(f"📺 iframe数量: {iframes}")
+
+        # 检测页面文本
+        body_text = sb.execute_script("return document.body?document.body.innerText.substring(0,1000):'';")
+        log(f"📄 页面文本前1000字符:\n{body_text[:500]}...")
+
+        # 检测包含 "ad" 或 "Watching" 的元素
+        ad_elements = sb.execute_script("""
+            (function() {
+                var all = document.querySelectorAll('*');
+                var ads = [];
+                for (var i = 0; i < all.length; i++) {
+                    var txt = (all[i].textContent || '').toLowerCase();
+                    if ((txt.indexOf('ad') !== -1 || txt.indexOf('watching') !== -1) && all[i].offsetParent !== null) {
+                        ads.push({
+                            tag: all[i].tagName,
+                            cls: all[i].className || '',
+                            text: (all[i].textContent || '').substring(0,100).trim()
+                        });
+                    }
+                }
+                return JSON.stringify(ads.slice(0, 10));
+            })();
+        """)
+        log(f"🔍 广告相关元素: {ad_elements}")
+
+    except Exception as e:
+        log(f"⚠️ 广告DOM检测失败: {e}")
+
+    # === 截图：广告流程开始时 ===
+    screenshot(sb, "ad-flow-start")
     t0 = time.time()
     clicked_again = False
     alpine_logged = 0
@@ -254,6 +307,10 @@ def wait_ad_flow(sb, before_secs, max_wait=AD_WAIT_SEC):
             ad_first_seen = time.time()
             log(f"🎬 [{int(elapsed)}秒] 检测到广告播放: {ad}")
             screenshot(sb, "ad-showing")
+
+            # 【调试】广告开始5秒后截图
+            time.sleep(5)
+            screenshot(sb, "ad-playing-5s")
         if result['reward_ready'] and not clicked_again:
             clicked_again = True
             log("🎁 广告奖励已就绪！等待 5 分钟冷却结束...")
