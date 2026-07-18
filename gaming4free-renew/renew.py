@@ -888,16 +888,45 @@ def main():
                                 screenshot(sb, f"turnstile-detected-{turnstile_handled_count}")
                             
                             sb.execute_script("""
-                                var turnstiles = document.querySelectorAll('.cf-turnstile > div');
-                                for (var t = 0; t < turnstiles.length; t++) {
-                                    var boxes = turnstiles[t].querySelectorAll('span[role="checkbox"]');
-                                    if (boxes.length > 0) { boxes[0].click(); break; }
-                                }
-                                if (turnstiles.length > 0) { turnstiles[0].click(); }
-                                if (turnstiles.length === 0) {
-                                    var el = document.querySelector('iframe[src*="challenges.cloudflare.com"]') || document.querySelector('.cf-turnstile');
-                                    if (el) el.click();
-                                }
+                                (function() {
+                                    // 1. 尝试通过坐标点击 iframe 中心 (最强暴力点击)
+                                    var cf_iframe = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
+                                    if (cf_iframe) {
+                                        var rect = cf_iframe.getBoundingClientRect();
+                                        if (rect.width > 0 && rect.height > 0) {
+                                            var x = rect.left + rect.width / 2;
+                                            var y = rect.top + rect.height / 2;
+                                            var el = document.elementFromPoint(x, y) || cf_iframe;
+                                            ['mousedown', 'mouseup', 'click'].forEach(type => {
+                                                el.dispatchEvent(new MouseEvent(type, {
+                                                    bubbles: true, cancelable: true, view: window,
+                                                    clientX: x, clientY: y
+                                                }));
+                                            });
+                                            console.log('Force clicked Turnstile center');
+                                        }
+                                    }
+
+                                    // 2. 尝试点击内部 checkbox 元素
+                                    var turnstiles = document.querySelectorAll('.cf-turnstile > div');
+                                    for (var t = 0; t < turnstiles.length; t++) {
+                                        var boxes = turnstiles[t].querySelectorAll('span[role="checkbox"]');
+                                        if (boxes.length > 0) { 
+                                            boxes[0].click(); 
+                                            console.log('Clicked Turnstile checkbox span');
+                                            break; 
+                                        }
+                                    }
+
+                                    // 3. 兜底点击容器
+                                    if (turnstiles.length > 0) { 
+                                        turnstiles[0].click(); 
+                                        console.log('Clicked Turnstile container div');
+                                    }
+                                    
+                                    // 4. 如果以上都失败，尝试直接点击 iframe 元素
+                                    if (cf_iframe) cf_iframe.click();
+                                })();
                             """)
                             turnstile_handled_count += 1
                             continue
