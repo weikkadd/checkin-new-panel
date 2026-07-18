@@ -159,21 +159,107 @@ def check_button_cooldown(sb):
     try: return sb.execute_script(js)
     except Exception as e: log(f"⚠️ 检查按钮冷却失败: {e}"); return None
 
-def handle_turnstile(sb, max_retries=3):
-    """处理 Cloudflare Turnstile 人机验证"""
+def handle_turnstile(sb, max_retries=5):
+    """处理 Cloudflare Turnstile 人机验证 (GitHub Actions 加强版)
+
+    多策略依次尝试:
+      1. uc_gui_click_captcha (SeleniumBase 内置, 依赖 xdotool)
+      2. CDP Input.dispatchMouseEvent 直接发点击坐标 (不依赖 xdotool)
+      3. iframe 内 checkbox 点击
+      4. 等待自动通过 (Turnstile 有时无交互通过)
+    """
     for attempt in range(max_retries):
         try:
-            if sb.find_elements('iframe[src*="cloudflare"]') or sb.find_elements('iframe[src*="turnstile"]'):
-                log(f"🛡️ 检测到 Cloudflare 人机验证 (第 {attempt+1}/{max_retries} 次尝试)")
-                screenshot(sb, f"turnstile-{attempt}")
-                try:
-                    sb.uc_gui_click_captcha(); log("✅ uc_gui_click_captcha 已成功执行"); time.sleep(5); return True
-                except Exception as e:
-                    log(f"⚠️ uc_gui_click_captcha 执行失败: {e}")
-            else:
+            cf_iframes = sb.find_elements('iframe[src*="cloudflare"]') or \
+                         sb.find_elements('iframe[src*="turnstile"]') or \
+                         sb.find_elements('iframe[title*="challenge"]') or \
+                         sb.find_elements('iframe[title*="Cloudflare"]')
+            if not cf_iframes:
                 return False
-        except Exception as e: log(f"⚠️ Turnstile 处理异常: {e}")
+
+            log(f"🛡️ 检测到 Turnstile (第 {attempt+1}/{max_retries} 次尝试)")
+            if attempt == 0:
+                screenshot(sb, "turnstile-start")
+
+            # 策略 1: SeleniumBase uc_gui_click_captcha
+            try:
+                sb.uc_gui_click_captcha()
+                log(f"✅ [尝试 {attempt+1}] uc_gui_click_captcha 已执行")
+                time.sleep(4)
+                if not sb.find_elements('iframe[src*="cloudflare"]'):
+                    log("🎉 Turnstile 已消失 (策略1 成功)")
+                    return True
+            except Exception as e:
+                log(f"⚠️ [尝试 {attempt+1}] uc_gui_click_captcha 失败: {e}")
+
+            # 策略 2: CDP Input.dispatchMouseEvent 直接点击 Turnstile iframe
+            try:
+                iframe = cf_iframes[0]
+                rect = sb.execute_script(
+                    "(function() { var el = arguments[0]; var r = el.getBoundingClientRect(); "
+                    "return {x: r.x, y: r.y, w: r.width, h: r.height}; })();",
+                    iframe
+                )
+                if rect:
+                    # Turnstile 复选框通常在 iframe 左侧 30px 位置
+                    click_x = int(rect['x'] + 30)
+                    click_y = int(rect['y'] + rect['h'] / 2)
+                    log(f"🎯 CDP 点击坐标: ({click_x}, {click_y}) iframe rect={rect}")
+
+                    sb.driver.execute_cdp_cmd("Input.dispatchMouseEvent", {
+                        "type": "mouseMoved", "x": click_x, "y": click_y,
+                    })
+                    time.sleep(0.3)
+                    sb.driver.execute_cdp_cmd("Input.dispatchMouseEvent", {
+                        "type": "mousePressed", "x": click_x, "y": click_y,
+                        "button": "left", "clickCount": 1,
+                    })
+                    time.sleep(0.1)
+                    sb.driver.execute_cdp_cmd("Input.dispatchMouseEvent", {
+                        "type": "mouseReleased", "x": click_x, "y": click_y,
+                        "button": "left", "clickCount": 1,
+                    })
+                    log(f"✅ [尝试 {attempt+1}] CDP 点击已发送")
+                    time.sleep(5)
+                    if not sb.find_elements('iframe[src*="cloudflare"]'):
+                        log("🎉 Turnstile 已消失 (策略2 成功)")
+                        return True
+            except Exception as e:
+                log(f"⚠️ [尝试 {attempt+1}] CDP 点击失败: {e}")
+
+            # 策略 3: iframe 内 checkbox 点击
+            try:
+                sb.switch_to.frame(iframe)
+                time.sleep(0.5)
+                checkboxes = sb.find_elements('input[type="checkbox"]')
+                if checkboxes:
+                    sb.execute_script("arguments[0].click();", checkboxes[0])
+                    log(f"✅ [尝试 {attempt+1}] iframe 内 checkbox 点击")
+                    time.sleep(4)
+                sb.switch_to.default_content()
+                if not sb.find_elements('iframe[src*="cloudflare"]'):
+                    log("🎉 Turnstile 已消失 (策略3 成功)")
+                    return True
+            except Exception as e:
+                log(f"⚠️ [尝试 {attempt+1}] iframe 内点击失败: {e}")
+                try:
+                    sb.switch_to.default_content()
+                except:
+                    pass
+
+            # 策略 4: 等待自动通过
+            time.sleep(3)
+            if not sb.find_elements('iframe[src*="cloudflare"]'):
+                log("🎉 Turnstile 已消失 (自动通过)")
+                return True
+
+        except Exception as e:
+            log(f"⚠️ [尝试 {attempt+1}] Turnstile 处理异常: {e}")
+
         time.sleep(2)
+
+    screenshot(sb, "turnstile-failed")
+    log(f"❌ Turnstile 处理 {max_retries} 次仍未通过")
     return False
 
 POLLING_METHODS = ('$refresh', 'refresh', 'poll', '$poll')
