@@ -145,13 +145,15 @@ def check_button_cooldown(sb):
             exp_match = re.search(r'expires\s+(\d+\S+)', page_text, re.I)
             if exp_match:
                 exp_text = exp_match.group(0).strip()
+                # 匹配 HH:MM 格式 (如 "expires 20:00" 表示 20分钟)
                 hm_match = re.search(r'(\d+):(\d+)', exp_text)
                 if hm_match:
                     hours = int(hm_match.group(1))
                     mins = int(hm_match.group(2))
                     remaining_sec = hours * 3600 + mins * 60
                     log(f"⏳ 检测到续费冷却: {exp_text} (剩余 {remaining_sec}秒 = {hours}h{mins}m)")
-                    return {'cooldown': True, 'remaining': remaining_sec, 'text': exp_text}
+                    return {{'cooldown': True, 'remaining': remaining_sec, 'text': exp_text}}
+                # 匹配纯数字格式 (如 "expires 5m", "expires 2h")
                 num_match = re.search(r'(\d+)', exp_text)
                 if num_match:
                     val = int(num_match.group(1))
@@ -164,7 +166,7 @@ def check_button_cooldown(sb):
                     else:
                         remaining_sec = val
                     log(f"⏳ 检测到续费冷却: {exp_text} (剩余 {remaining_sec}秒)")
-                    return {'cooldown': True, 'remaining': remaining_sec, 'text': exp_text}
+                    return {{'cooldown': True, 'remaining': remaining_sec, 'text': exp_text}}
             # 匹配 "XX:XX cd" 格式 (如 "04:56 cd" 表示按钮冷却倒计时)
             cd_match = re.search(r'(\d+):(\d+)\s+cd', page_text, re.I)
             if cd_match:
@@ -173,12 +175,12 @@ def check_button_cooldown(sb):
                 remaining_sec = mins * 60 + secs
                 cd_text = cd_match.group(0).strip()
                 log(f"⏳ 检测到按钮冷却倒计时: {cd_text} (剩余 {remaining_sec}秒)")
-                return {'cooldown': True, 'remaining': remaining_sec, 'text': cd_text}
+                return {{'cooldown': True, 'remaining': remaining_sec, 'text': cd_text}}
     except Exception as e:
-        log(f"⚠️ 检查 expires 冷却失败: {e}")
+        log(f"⚠️ 检查 expires 冷却失败: {{e}}")
     
     # === 策略2: 检查按钮本身的 disabled 状态 ===
-    js = r"""
+    js = """
     (function() {{
         var btns = document.querySelectorAll('button');
         for (var i = 0; i < btns.length; i++) {{
@@ -187,7 +189,7 @@ def check_button_cooldown(sb):
                 var disabled = btns[i].disabled || btns[i].getAttribute('aria-disabled') === 'true';
                 var classes = btns[i].className || '';
                 var isCooldown = classes.indexOf('disabled') !== -1 || classes.indexOf('cursor-not-allowed') !== -1 || disabled;
-                var waitMatch = text.match(/Wait\s*(\d+)/i) || text.match(/(\d+)\s*s/);
+                var waitMatch = text.match(/Wait\\s*(\\d+)/i) || text.match(/(\\d+)\\s*s/);
                 if (waitMatch) return {{cooldown: true, remaining: parseInt(waitMatch[1]), text: text.trim()}};
                 if (isCooldown) return {{cooldown: true, disabled: true, text: text.trim()}};
                 return {{cooldown: false, text: text.trim()}};
@@ -197,7 +199,7 @@ def check_button_cooldown(sb):
     }})();
     """
     try: return sb.execute_script(js)
-    except Exception as e: log(f"⚠️ 检查按钮冷却失败: {e}"); return None
+    except Exception as e: log(f"⚠️ 检查按钮冷却失败: {{e}}"); return None
 
 
 def handle_turnstile(sb, max_retries=3):
