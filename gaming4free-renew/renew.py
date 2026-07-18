@@ -171,22 +171,22 @@ def check_button_cooldown(sb):
     
     # === 策略2: 检查按钮本身的 disabled 状态 ===
     js = """
-    (function() {{
+    (function() {
         var btns = document.querySelectorAll('button');
-        for (var i = 0; i < btns.length; i++) {{
+        for (var i = 0; i < btns.length; i++) {
             var text = btns[i].innerText || '';
-            if (text.indexOf('90') !== -1) {{
+            if (text.indexOf('90') !== -1) {
                 var disabled = btns[i].disabled || btns[i].getAttribute('aria-disabled') === 'true';
                 var classes = btns[i].className || '';
                 var isCooldown = classes.indexOf('disabled') !== -1 || classes.indexOf('cursor-not-allowed') !== -1 || disabled;
                 var waitMatch = text.match(/Wait\\s*(\\d+)/i) || text.match(/(\\d+)\\s*s/);
-                if (waitMatch) return {{cooldown: true, remaining: parseInt(waitMatch[1]), text: text.trim()}};
-                if (isCooldown) return {{cooldown: true, disabled: true, text: text.trim()}};
-                return {{cooldown: false, text: text.trim()}};
-            }}
-        }}
+                if (waitMatch) return {cooldown: true, remaining: parseInt(waitMatch[1]), text: text.trim()};
+                if (isCooldown) return {cooldown: true, disabled: true, text: text.trim()};
+                return {cooldown: false, text: text.trim()};
+            }
+        }
         return null;
-    }})();
+    })();
     """
     try: return sb.execute_script(js)
     except Exception as e: log(f"⚠️ 检查按钮冷却失败: {e}"); return None
