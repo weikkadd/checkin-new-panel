@@ -445,25 +445,26 @@ def call_livewire_directly(sb, component_id, method):
     """【Pro v8】直接调用 Livewire 組件方法"""
     try:
         log(f"🚀 尝试直接调用 Livewire: component={component_id}, method={method}")
-        res = sb.execute_script(f"""
-            return (function() {
+        js_script = """
+            return (function() {{
                 if(window.Livewire){{
-                    let comp=Livewire.find('{component_id}');
+                    let comp=Livewire.find('{component_id_placeholder}');
                     if(comp){{
-                        comp.call('{method}');
+                        comp.call('{method_placeholder}');
                         return 'called-via-find';
                     }}
                     let comps=Livewire.all();
                     for(let c of comps){{
-                        if(c.id==='{component_id}'){{
-                            c.call('{method}');
+                        if(c.id==='{component_id_placeholder}'){{
+                            c.call('{method_placeholder}');
                             return 'called-via-all';
                         }}
                     }}
                 }}
                 return 'no-livewire';
-            })();
-        """)
+            }})();
+        """.format(component_id_placeholder=component_id, method_placeholder=method)
+        res = sb.execute_script(js_script)
         log(f"🎯 直接调用结果: {res}")
         return True
     except Exception as e:
