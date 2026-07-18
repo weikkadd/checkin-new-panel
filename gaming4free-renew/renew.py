@@ -615,53 +615,157 @@ def main():
                         log(f"⏳ 续期按钮冷却中: {btn_info.get('text')}")
                         send_tg("按钮冷却中", server_name, before_text)
                         continue
-
                     # =============================================
-                    # 🖱️ 点击 +90 分钟续期按钮 (Pro 多层策略)
+                    # 🖱️ 点击 +90 分钟续期按钮 (Pro v9 增强版)
                     # =============================================
                     log("🖱️ 正在寻找并点击 +90 分钟续期按钮...")
 
                     click_done = False
 
-                    # --- 策略1: Livewire API 直接调用 ---
+                    # === Pro v9 关键诊断：找出按钮的真实事件绑定 ===
                     try:
-                        log("📍 策略1: Livewire API 直接调用...")
+                        log("🔍 Pro v9: 诊断按钮事件绑定...")
 
-                        # 先找 .rt-btn-free 按钮获取 wire:click 方法名
-                        btn_method = None
-                        try:
-                            elem = sb.find_element(By.CSS_SELECTOR, 'button.rt-btn-free', timeout=5)
-                            text = (elem.text or '').strip()
-                            log(f"   找到按钮文本: '{text}'")
-                            has_lw = elem.get_attribute('wire:click') or ''
-                            if has_lw:
-                                btn_method = has_lw
-                                log(f"   ✅ 获取到 wire:click 方法: {btn_method}")
-                            else:
-                                log(f"   ⚠️ 按钮没有 wire:click 属性")
-                        except Exception as e:
-                            log(f"   ⚠️ 找不到 .rt-btn-free 按钮: {e}")
+                        diag_result = sb.execute_script("""
+                            (function() {
+                                var btns = document.querySelectorAll('button');
+                                for (var i = 0; i < btns.length; i++) {
+                                    var txt = (btns[i].textContent || '').trim();
+                                    if ((txt.includes('+90') || txt.includes('90 min')) && btns[i].offsetParent !== null) {
+                                        var info = {
+                                            tag: btns[i].tagName,
+                                            className: btns[i].className,
+                                            id: btns[i].id,
+                                            text: txt,
+                                            wireClick: btns[i].getAttribute('wire:click'),
+                                            xOn: btns[i].getAttribute('x-on:click'),
+                                            onClick: btns[i].getAttribute('onclick'),
+                                            dataAction: btns[i].getAttribute('data-action'),
+                                            hasXData: !!btns[i].closest('[x-data]'),
+                                            hasWireId: !!btns[i].closest('[wire:id]'),
+                                            parentTag: btns[i].parentElement ? btns[i].parentElement.tagName : '',
+                                            parentClass: btns[i].parentElement ? btns[i].parentElement.className : ''
+                                        };
 
-                        if btn_method:
-                            # 方式 A: 通过组件 ID 调用指定方法
-                            lw_result = sb.execute_script(f"""
-                                var components = window.Livewire ? window.Livewire.all() : [];
-                                for (var c = 0; c < components.length; c++) {{
-                                    try {{
-                                        components[c].call('{btn_method}');
-                                        console.log('Called: ' + '{btn_method}');
-                                        return 'called:' + '{btn_method}';
-                                    }} catch(e) {{}}
-                                }}
-                                return 'no-match';
-                            """)
-                            log(f"   🎯 Livewire call 结果: {lw_result}")
-                            if 'called:' in lw_result:
-                                click_done = True
-                                log("   ✅ 策略1成功！")
+                                        // 检查 Alpine.js 绑定
+                                        var root = btns[i].closest('[x-data]');
+                                        if (root) {
+                                            info.alpineData = root.getAttribute('x-data');
+                                            info.alpineListeners = [];
+                                            for (var attr of root.attributes) {
+                                                if (attr.name.startsWith('@') || attr.name.startsWith('x-on:') || attr.name.startsWith('x-init')) {
+                                                    info.alpineListeners.push(attr.name + '=' + attr.value);
+                                                }
+                                            }
+                                        }
+
+                                        // 检查 window.Livewire 组件
+                                        if (window.Livewire) {
+                                            var comps = window.Livewire.all();
+                                            info.livewireComponents = comps.length;
+                                            for (var c = 0; c < Math.min(comps.length, 3); c++) {
+                                                try {
+                                                    var snap = comps[c].snapshot;
+                                                    if (snap && snap.html) {
+                                                        if (snap.html.indexOf('extend') !== -1 || snap.html.indexOf('90') !== -1) {
+                                                            info.componentIndex = c;
+                                                            info.hasExtendInComponent = true;
+                                                        }
+                                                    }
+                                                } catch(e) {}
+                                            }
+                                        }
+
+                                        return JSON.stringify(info);
+                                    }
+                                }
+                                return JSON.stringify({found: false});
+                            })();
+                        """)
+                        log(f"   🔬 诊断结果: {diag_result}")
+                        screenshot(sb, "button-diagnosis")
 
                     except Exception as e:
-                        log(f"   ⚠️ 策略1异常: {e}")
+                        log(f"   ⚠️ 诊断失败: {e}")
+
+                    # --- 策略1: 通过 Alpine.js 数据模型调用方法 ---
+                    try:
+                        log("📍 策略1: Alpine.js 数据模型操作...")
+
+                        alpine_info = sb.execute_script("""
+                            var btn = null;
+                            var allBtns = document.querySelectorAll('button');
+                            for (var i = 0; i < allBtns.length; i++) {
+                                if ((allBtns[i].textContent || '').indexOf('90') !== -1 && allBtns[i].offsetParent !== null) {
+                                    btn = allBtns[i];
+                                    break;
+                                }
+                            }
+                            if (!btn) return JSON.stringify({error: 'no-btn'});
+
+                            var root = btn.closest('[x-data]');
+                            if (!root) return JSON.stringify({error: 'no-root'});
+
+                            var data = null;
+                            try {
+                                if (window.Alpine && Alpine.$data) data = Alpine.$data(root);
+                                else if (root.__x && root.__x.$data) data = root.__x.$data;
+                            } catch(e) {}
+
+                            if (!data) return JSON.stringify({error: 'no-alpine-data'});
+
+                            var methods = [];
+                            var targetMethods = [];
+                            for (var key in data) {
+                                if (typeof data[key] === 'function') {
+                                    methods.push(key);
+                                    var kl = key.toLowerCase();
+                                    if (kl.includes('extend') || kl.includes('renew') || 
+                                        kl.includes('ad') || kl.includes('watch') || kl.includes('claim')) {
+                                        targetMethods.push(key);
+                                    }
+                                }
+                            }
+
+                            return JSON.stringify({
+                                found: true,
+                                methods: methods.slice(0, 30),
+                                targetMethods: targetMethods,
+                                stateKeys: Object.keys(data).filter(k => typeof data[k] !== 'function').slice(0, 20)
+                            });
+                        """)
+                        log(f"   🔬 Alpine 信息: {alpine_info}")
+
+                        # 如果有目标方法，直接调用
+                        import json
+                        try:
+                            parsed = json.loads(alpine_info)
+                            if parsed.get('targetMethods'):
+                                method = parsed['targetMethods'][0]
+                                log(f"   🎯 找到目标方法: {method}")
+
+                                call_result = sb.execute_script(f"""
+                                    var root = document.querySelector('[x-data]');
+                                    if (!root) return 'no-root';
+                                    var data = null;
+                                    try {{
+                                        if (window.Alpine && Alpine.$data) data = Alpine.$data(root);
+                                        else if (root.__x && root.__x.$data) data = root.__x.$data;
+                                    }} catch(e) {{}}
+                                    if (data && typeof data.{method} === 'function') {{
+                                        data.{method}();
+                                        return 'called:' + '{method}';
+                                    }}
+                                    return 'method-not-found';
+                                """)
+                                log(f"   🎯 Alpine 方法调用: {call_result}")
+                                if 'called:' in str(call_result):
+                                    click_done = True
+                        except Exception as je:
+                            log(f"   ⚠️ JSON解析失败: {je}")
+
+                    except Exception as e:
+                        log(f"   ⚠️ 策略1失败: {e}")
 
                     # --- 策略2: dispatch livewire:submit 事件 ---
                     if not click_done:
@@ -711,7 +815,7 @@ def main():
                         except Exception as e:
                             log(f"⚠️ 策略3失败: {e}")
 
-                    # --- Pro v8 二次点击重试 ---
+                    # --- Pro v9 二次点击重试 ---
                     if not click_done:
                         log("⚠️ 第一次点击失败，Pro重新尝试")
                         screenshot(sb, "click-failed")
@@ -739,6 +843,8 @@ def main():
                         log("❌ 所有点击策略均失败")
                         screenshot(sb, "点击全部失败")
                         send_tg("❌ 无法点击续期按钮", server_name, before_text)
+                        continue
+
                         continue
 
                     # 等待页面响应
