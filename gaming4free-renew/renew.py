@@ -997,13 +997,12 @@ def wait_ad_flow(sb, before_secs, max_wait=AD_WAIT_SEC):
         elapsed = time.time() - t0
 
         # === Pro广告卡死检测 ===
-        # Skip first 5 seconds to allow page to settle (avoid false positives from Livewire rendering)
+        # Log warning only - do NOT break the ad flow; Livewire rendering can cause false positives
         if int(elapsed) >= 5 and int(elapsed) % 20 == 0:
             try:
                 if detect_page_stuck(sb):
-                    log("⚠️ 检测到广告页面可能卡死")
-                    screenshot(sb, "ad-stuck")
-                    break
+                    log("⚠️ 检测到广告页面可能卡死 (忽略，继续等待)")
+                    screenshot(sb, "ad-stuck-partial")
             except Exception as e:
                 log(f"广告检测异常: {e}")
 
