@@ -377,7 +377,11 @@ def main():
                         # 3. 等待 Turnstile / Confirm / 广告流程
                         log("⏳ 等待 Turnstile / 广告流程...")
                         captcha_passed = False
+                        browser_dead = False  # 标记浏览器是否崩溃
                         for tw in range(60):  # 延长到 60 秒, 广告需要时间
+                            if browser_dead:
+                                # 浏览器已崩溃, 跳出循环, 后面用 reconnect 恢复
+                                break
                             time.sleep(1)
                             try:
                                 # 检查 Turnstile
@@ -393,60 +397,93 @@ def main():
                                         time.sleep(3)
                                         captcha_passed = True
                                         log("✅ Turnstile 验证完成")
+                                        # ★ 关键: uc_gui_click_captcha 后浏览器可能崩溃
+                                        # 用 reconnect 重连 (而不是直接用 driver)
+                                        try:
+                                            sb.uc_open_with_reconnect(server_url, reconnect_time=4)
+                                            time.sleep(3)
+                                            log("✅ 浏览器重连成功")
+                                        except Exception as e:
+                                            log(f"⚠️ 浏览器重连失败: {e}")
+                                            browser_dead = True
+                                            break
                                     except Exception as e:
                                         log(f"⚠️ uc_gui_click_captcha 失败: {e}")
 
-                                # 检查广告 iframe (可能需要等广告播完)
-                                ad_iframes = sb.driver.execute_script("""
-                                    var ifs = document.querySelectorAll('iframe');
-                                    var arr = [];
-                                    for (var i = 0; i < ifs.length; i++) {
-                                        var src = ifs[i].src || '';
-                                        if (src.indexOf('doubleclick') !== -1 || src.indexOf('googlesyndication') !== -1
-                                            || src.indexOf('youtube') !== -1 || src.indexOf('ad') !== -1) {
-                                            arr.push(src.substring(0, 100));
+                                # 检查广告 iframe
+                                try:
+                                    ad_iframes = sb.driver.execute_script("""
+                                        var ifs = document.querySelectorAll('iframe');
+                                        var arr = [];
+                                        for (var i = 0; i < ifs.length; i++) {
+                                            var src = ifs[i].src || '';
+                                            if (src.indexOf('doubleclick') !== -1 || src.indexOf('googlesyndication') !== -1
+                                                || src.indexOf('youtube') !== -1 || src.indexOf('ad') !== -1) {
+                                                arr.push(src.substring(0, 100));
+                                            }
                                         }
-                                    }
-                                    return arr;
-                                """)
-                                if ad_iframes and tw % 10 == 0:
-                                    log(f"📺 [第 {tw+1} 秒] 检测到广告 iframe: {ad_iframes[0]}")
+                                        return arr;
+                                    """)
+                                    if ad_iframes and tw % 10 == 0:
+                                        log(f"📺 [第 {tw+1} 秒] 检测到广告 iframe: {ad_iframes[0]}")
+                                except Exception:
+                                    pass
 
-                                # 检查是否有 Confirm 按钮 (Turnstile 通过后可能需要确认)
-                                confirm_clicked = sb.driver.execute_script("""
-                                    var btns = document.querySelectorAll('button');
-                                    for (var i = 0; i < btns.length; i++) {
-                                        var t = (btns[i].innerText || '').trim().toLowerCase();
-                                        if ((t === 'confirm' || t === 'ok' || t === 'yes' || t === 'continue' || t === 'verify')
-                                            && !btns[i].disabled) {
-                                            btns[i].scrollIntoView({block: 'center'});
-                                            btns[i].click();
-                                            return 'clicked:' + btns[i].innerText.trim();
+                                # 检查 Confirm 按钮
+                                try:
+                                    confirm_clicked = sb.driver.execute_script("""
+                                        var btns = document.querySelectorAll('button');
+                                        for (var i = 0; i < btns.length; i++) {
+                                            var t = (btns[i].innerText || '').trim().toLowerCase();
+                                            if ((t === 'confirm' || t === 'ok' || t === 'yes' || t === 'continue' || t === 'verify')
+                                                && !btns[i].disabled) {
+                                                btns[i].scrollIntoView({block: 'center'});
+                                                btns[i].click();
+                                                return 'clicked:' + btns[i].innerText.trim();
+                                            }
                                         }
-                                    }
-                                    return false;
-                                """)
-                                if confirm_clicked:
-                                    log(f"✅ 点击确认按钮: {confirm_clicked}")
-                                    time.sleep(2)
+                                        return false;
+                                    """)
+                                    if confirm_clicked:
+                                        log(f"✅ 点击确认按钮: {confirm_clicked}")
+                                        time.sleep(2)
+                                except Exception:
+                                    pass
 
                             except Exception as e:
+                                # 检查是否是浏览器崩溃
+                                err_msg = str(e)
+                                if "Connection refused" in err_msg or "Max retries exceeded" in err_msg:
+                                    log(f"💀 [第 {tw+1} 秒] 浏览器已崩溃, 跳出等待循环")
+                                    browser_dead = True
+                                    break
                                 if tw % 10 == 0:
-                                    log(f"⚠️ [第 {tw+1} 秒] 异常: {e}")
+                                    log(f"⚠️ [第 {tw+1} 秒] 异常: {err_msg[:100]}")
 
                         time.sleep(3)
 
-                        # 刷新页面
-                        log("🔄 刷新页面验证续期结果...")
-                        sb.refresh()
-                        time.sleep(5)
-                        
+                        # ★ 关键修复: 浏览器可能崩溃, 用 reconnect 重新打开页面
+                        log("🔄 重新打开页面验证续期结果...")
+                        try:
+                            sb.uc_open_with_reconnect(server_url, reconnect_time=6)
+                            time.sleep(8)  # 等页面完全加载
+                        except Exception as e:
+                            log(f"⚠️ 重新打开页面失败: {e}")
+                            # 最后尝试普通 open
+                            try:
+                                sb.open_url(server_url)
+                                time.sleep(5)
+                            except Exception as e2:
+                                log(f"❌ open_url 也失败: {e2}")
+                                send_tg(f"❌ 浏览器崩溃: {str(e2)[:100]}", server_name, before_lt)
+                                continue
+
                         # 获取续期后时间
                         after_lt, after_ls = get_remaining_time(sb)
                         diff = after_ls - before_ls
-                        
+
                         log(f"⏱️ 续期后时间: {after_lt} ({after_ls}秒)，增加: {diff}秒")
-                        
+
                         if diff > 0:
                             log(f"✅ 续期成功！时间增加 {diff}秒 ({before_lt} → {after_lt})")
                             send_tg(f"✅ Pro续期成功 (+{diff}s)", server_name, after_lt)
