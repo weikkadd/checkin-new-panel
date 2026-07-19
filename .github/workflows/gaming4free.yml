@@ -17,6 +17,34 @@ jobs:
         with:
           lfs: false
 
+      - name: 修复换行符（防止 autocrlf 压缩文件）
+        run: |
+          cd gaming4free-renew
+          python3 -c "
+          import os
+          f = 'renew.py'
+          if os.path.exists(f):
+              with open(f, 'rb') as fh:
+                  c = fh.read()
+              if b'\r\n' in c:
+                  c = c.replace(b'\r\n', b'\n')
+              lines = c.split(b'\n')
+              if len(lines) < 10:
+                  print(f'WARNING: File has only {len(lines)} lines, fixing...')
+                  # 文件被压缩，尝试从 git 恢复
+                  import subprocess
+                  subprocess.run(['git', 'checkout', 'HEAD', '--', f], check=True)
+                  with open(f, 'rb') as fh:
+                      c = fh.read()
+                  c = c.replace(b'\r\n', b'\n')
+                  with open(f, 'wb') as fh:
+                      fh.write(c)
+                  lines = c.split(b'\n')
+                  print(f'Recovered: {len(lines)} lines')
+              else:
+                  print(f'OK: File has {len(lines)} lines')
+          "
+
       - name: 配置 Python
         uses: actions/setup-python@v4
         with:
