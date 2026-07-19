@@ -67,7 +67,15 @@ jobs:
       - name: 配置 TUIC 代理桥接
         run: |
           echo "🚀 下载 tuic-client..."
-          curl -L https://github.com/EAimTY/tuic/releases/download/1.0.0/tuic-client-1.0.0-x86_64-unknown-linux-gnu -o tuic-client
+          # 使用更通用的下载方式，并检查文件有效性
+          curl -L "https://github.com/EAimTY/tuic/releases/download/tuic-client-1.0.0/tuic-client-1.0.0-x86_64-unknown-linux-gnu" -o tuic-client || \
+          curl -L "https://github.com/EAimTY/tuic/releases/download/1.0.0/tuic-client-1.0.0-x86_64-unknown-linux-gnu" -o tuic-client
+          
+          if grep -q "Not Found" tuic-client; then
+            echo "❌ 下载链接失效，尝试备用链接..."
+            curl -L "https://github.com/EAimTY/tuic/releases/download/tuic-client-1.0.0/tuic-client-1.0.0-x86_64-unknown-linux-gnu" -o tuic-client
+          fi
+          
           chmod +x tuic-client
           
           echo "📝 生成 TUIC 配置..."
