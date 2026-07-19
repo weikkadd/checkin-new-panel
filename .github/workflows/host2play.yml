@@ -64,41 +64,63 @@ jobs:
           NODE_LINK: ${{ secrets.NODE_LINK }}
         run: |
           if [ -n "$NODE_LINK" ]; then
-            echo "🚀 正在安装并启动 sing-box..."
-            # 获取最新版 sing-box
-            latest_version=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name | sed 's/v//')
-            echo "最新版本: v$latest_version"
-            curl -Lo sing-box.tar.gz "https://github.com/SagerNet/sing-box/releases/download/v${latest_version}/sing-box-${latest_version}-linux-amd64.tar.gz"
+            echo "[INFO] 获取 sing-box 最新版本..."
+            latest_version=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r .tag_name)
+            echo "[INFO] 最新稳定版本: $latest_version"
+            
+            # 下载并安装 sing-box
+            curl -Lo sing-box.tar.gz "https://github.com/SagerNet/sing-box/releases/download/${latest_version}/sing-box-${latest_version#v}-linux-amd64.tar.gz"
             tar -xzf sing-box.tar.gz
             cp sing-box-*/sing-box .
             chmod +x sing-box
 
-            # 生成配置并启动 (假设 NODE_LINK 是订阅链接或节点链接，这里简化为 tuic 转换逻辑)
-            # 注意：这里的转换逻辑取决于您的 NODE_LINK 格式，目前先按您之前的逻辑启动
-            # 如果您有专门的转换脚本，请在这里调用
+            echo "[INFO] 正在生成 sing-box 配置..."
+            # 这里使用您之前成功的配置生成逻辑 (假设是 TUIC 协议)
+            # 提取 TUIC 链接中的信息并生成 config.json
+            UUID=$(echo $NODE_LINK | sed -n 's/.*tuic:\/\/\([^%]*\).*/\1/p')
+            PASS=$(echo $NODE_LINK | sed -n 's/.*%3A\([^@]*\)@.*/\1/p')
+            ADDR=$(echo $NODE_LINK | sed -n 's/.*@\([^:]*\):.*/\1/p')
+            PORT=$(echo $NODE_LINK | sed -n 's/.*:\([0-9]*\)?.*/\1/p')
+            SNI=$(echo $NODE_LINK | sed -n 's/.*sni=\([^&]*\).*/\1/p')
             
-            # 临时启动逻辑 (示例，请确保您的 NODE_LINK 逻辑正确)
-            # ./sing-box run -c config.json > sing-box.log 2>&1 &
+            cat <<EOF > config.json
+            {
+              "log": { "level": "info" },
+              "outbounds": [
+                {
+                  "type": "tuic",
+                  "tag": "proxy",
+                  "server": "$ADDR",
+                  "server_port": $PORT,
+                  "uuid": "$UUID",
+                  "password": "$PASS",
+                  "congestion_control": "bbr",
+                  "alpn": ["h3"],
+                  "tls": { "enabled": true, "server_name": "$SNI", "insecure": true }
+                }
+              ],
+              "inbounds": [
+                { "type": "socks", "tag": "socks-in", "listen": "127.0.0.1", "listen_port": 1080 }
+              ]
+            }
+            EOF
+            echo "[INFO] ✅ sing-box 配置已生成"
+
+            echo "[INFO] 启动 sing-box..."
+            ./sing-box run -c config.json > sing-box.log 2>&1 &
             
-            # 为了最稳妥，这里建议直接运行您之前成功的 sing-box 启动脚本内容
-            # 假设您之前是通过脚本生成的 config.json
-            # [这里插入您之前成功的 sing-box 启动代码块]
-            
-            # 这里我先放入通用的 sing-box 启动逻辑占位，请根据实际情况调整
-            echo "代理启动中..."
+            echo "⏳ 等待代理就绪..."
+            MAX_RETRIES=15
+            for ((i=1; i<=MAX_RETRIES; i++)); do
+              if curl -s --socks5 127.0.0.1:1080 https://api.ip.sb/ip > /dev/null; then
+                echo "[INFO] ✅ 代理连接成功"
+                echo "📍 出口 IP: $(curl -s --socks5 127.0.0.1:1080 https://api.ip.sb/ip)"
+                break
+              fi
+              sleep 3
+              [ $i -eq $MAX_RETRIES ] && echo "❌ 代理连接超时" && exit 1
+            done
           fi
-          
-          # 检查代理就绪
-          echo "⏳ 等待代理就绪..."
-          MAX_RETRIES=15
-          for ((i=1; i<=MAX_RETRIES; i++)); do
-            if curl -s --socks5 127.0.0.1:1080 https://api.ip.sb/ip > /dev/null; then
-              echo "✅ 代理已就绪，出口 IP: $(curl -s --socks5 127.0.0.1:1080 https://api.ip.sb/ip)"
-              break
-            fi
-            sleep 3
-            [ $i -eq $MAX_RETRIES ] && echo "❌ 代理启动超时" && exit 1
-          done
           
           echo "🚀 开始执行续期脚本..."
           cd host2play-renew
