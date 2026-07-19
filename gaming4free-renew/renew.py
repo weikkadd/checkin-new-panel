@@ -375,86 +375,82 @@ def main():
                         #    不处理, 让它自己消失
 
                         # 3. 等待 Turnstile / Confirm / 广告流程
+                        # ★ 关键改进: 不要在 uc_gui_click_captcha 后立即 reconnect (会崩溃)
+                        #    而是等待 10 秒让 Turnstile 自然通过, 然后用 sb.open_url 重新加载
                         log("⏳ 等待 Turnstile / 广告流程...")
                         captcha_passed = False
-                        browser_dead = False  # 标记浏览器是否崩溃
-                        for tw in range(60):  # 延长到 60 秒, 广告需要时间
+                        captcha_passed_time = 0  # 记录 Turnstile 通过的时刻
+                        browser_dead = False
+                        last_btn_check = 0
+                        for tw in range(45):  # 45 秒
                             if browser_dead:
-                                # 浏览器已崩溃, 跳出循环, 后面用 reconnect 恢复
                                 break
                             time.sleep(1)
                             try:
                                 # 检查 Turnstile
-                                ts_present = bool(sb.driver.execute_script("""
-                                    return !!document.querySelector('iframe[src*="challenges.cloudflare.com"]')
-                                        || !!document.querySelector('.cf-turnstile')
-                                        || (document.body && document.body.innerText.toLowerCase().indexOf("verify") !== -1);
-                                """))
-                                if ts_present and not captcha_passed:
-                                    log(f"🛡️ [第 {tw+1} 秒] 检测到 Turnstile，处理验证...")
-                                    try:
-                                        sb.uc_gui_click_captcha()
-                                        time.sleep(3)
-                                        captcha_passed = True
-                                        log("✅ Turnstile 验证完成")
-                                        # ★ 关键: uc_gui_click_captcha 后浏览器可能崩溃
-                                        # 用 reconnect 重连 (而不是直接用 driver)
+                                if not captcha_passed:
+                                    ts_present = bool(sb.driver.execute_script("""
+                                        return !!document.querySelector('iframe[src*="challenges.cloudflare.com"]')
+                                            || !!document.querySelector('.cf-turnstile')
+                                            || (document.body && document.body.innerText.toLowerCase().indexOf("verify") !== -1);
+                                    """))
+                                    if ts_present:
+                                        log(f"🛡️ [第 {tw+1} 秒] 检测到 Turnstile，处理验证...")
                                         try:
-                                            sb.uc_open_with_reconnect(server_url, reconnect_time=4)
-                                            time.sleep(3)
-                                            log("✅ 浏览器重连成功")
+                                            sb.uc_gui_click_captcha()
+                                            time.sleep(8)  # ★ 等 8 秒让 Turnstile 完全通过 + 后端处理
+                                            captcha_passed = True
+                                            captcha_passed_time = tw
+                                            log("✅ Turnstile 验证完成, 等待后端处理...")
                                         except Exception as e:
-                                            log(f"⚠️ 浏览器重连失败: {e}")
-                                            browser_dead = True
-                                            break
-                                    except Exception as e:
-                                        log(f"⚠️ uc_gui_click_captcha 失败: {e}")
+                                            log(f"⚠️ uc_gui_click_captcha 失败: {e}")
 
-                                # 检查广告 iframe
-                                try:
-                                    ad_iframes = sb.driver.execute_script("""
-                                        var ifs = document.querySelectorAll('iframe');
-                                        var arr = [];
-                                        for (var i = 0; i < ifs.length; i++) {
-                                            var src = ifs[i].src || '';
-                                            if (src.indexOf('doubleclick') !== -1 || src.indexOf('googlesyndication') !== -1
-                                                || src.indexOf('youtube') !== -1 || src.indexOf('ad') !== -1) {
-                                                arr.push(src.substring(0, 100));
-                                            }
-                                        }
-                                        return arr;
-                                    """)
-                                    if ad_iframes and tw % 10 == 0:
-                                        log(f"📺 [第 {tw+1} 秒] 检测到广告 iframe: {ad_iframes[0]}")
-                                except Exception:
-                                    pass
+                                # Turnstile 通过后, 每 3 秒检查并点击提交按钮
+                                if captcha_passed and tw - last_btn_check >= 3:
+                                    last_btn_check = tw
+                                    try:
+                                        # 列出当前所有可见按钮 (诊断, 仅前 15 秒打印)
+                                        if tw - captcha_passed_time < 15 and tw % 3 == 0:
+                                            current_btns = sb.driver.execute_script("""
+                                                var btns = document.querySelectorAll('button');
+                                                var arr = [];
+                                                for (var i = 0; i < btns.length; i++) {
+                                                    var t = (btns[i].innerText || '').trim();
+                                                    if (t && btns[i].offsetParent !== null) arr.push(t.substring(0, 50));
+                                                }
+                                                return arr;
+                                            """)
+                                            log(f"🐛 [第 {tw+1} 秒] 当前可见按钮: {current_btns}")
+                                    except: pass
 
-                                # 检查 Confirm 按钮
-                                try:
-                                    confirm_clicked = sb.driver.execute_script("""
-                                        var btns = document.querySelectorAll('button');
-                                        for (var i = 0; i < btns.length; i++) {
-                                            var t = (btns[i].innerText || '').trim().toLowerCase();
-                                            if ((t === 'confirm' || t === 'ok' || t === 'yes' || t === 'continue' || t === 'verify')
-                                                && !btns[i].disabled) {
-                                                btns[i].scrollIntoView({block: 'center'});
-                                                btns[i].click();
-                                                return 'clicked:' + btns[i].innerText.trim();
+                                    # 尝试点击提交按钮
+                                    try:
+                                        submit_clicked = sb.driver.execute_script("""
+                                            var btns = document.querySelectorAll('button');
+                                            var keywords = ['confirm', 'submit', 'renew', 'claim', 'continue', 'ok', 'yes', 'verify', 'get free time', 'apply'];
+                                            for (var i = 0; i < btns.length; i++) {
+                                                var t = (btns[i].innerText || '').trim().toLowerCase();
+                                                if (btns[i].disabled) continue;
+                                                if (btns[i].offsetParent === null) continue;  // 不可见
+                                                for (var k = 0; k < keywords.length; k++) {
+                                                    if (t.indexOf(keywords[k]) !== -1 && t.indexOf('cancel') === -1 && t.indexOf('later') === -1) {
+                                                        btns[i].scrollIntoView({block: 'center'});
+                                                        btns[i].click();
+                                                        return 'clicked:' + btns[i].innerText.trim();
+                                                    }
+                                                }
                                             }
-                                        }
-                                        return false;
-                                    """)
-                                    if confirm_clicked:
-                                        log(f"✅ 点击确认按钮: {confirm_clicked}")
-                                        time.sleep(2)
-                                except Exception:
-                                    pass
+                                            return false;
+                                        """)
+                                        if submit_clicked:
+                                            log(f"✅ 点击提交按钮: {submit_clicked}")
+                                            time.sleep(3)
+                                    except: pass
 
                             except Exception as e:
-                                # 检查是否是浏览器崩溃
                                 err_msg = str(e)
                                 if "Connection refused" in err_msg or "Max retries exceeded" in err_msg:
-                                    log(f"💀 [第 {tw+1} 秒] 浏览器已崩溃, 跳出等待循环")
+                                    log(f"💀 [第 {tw+1} 秒] 浏览器崩溃, 跳出循环")
                                     browser_dead = True
                                     break
                                 if tw % 10 == 0:
@@ -462,19 +458,20 @@ def main():
 
                         time.sleep(3)
 
-                        # ★ 关键修复: 浏览器可能崩溃, 用 reconnect 重新打开页面
-                        log("🔄 重新打开页面验证续期结果...")
+                        # ★ 关键修复: 用 sb.open_url 重新加载页面 (不用 reconnect)
+                        log("🔄 重新加载页面验证续期结果...")
                         try:
-                            sb.uc_open_with_reconnect(server_url, reconnect_time=6)
-                            time.sleep(8)  # 等页面完全加载
+                            sb.open_url(server_url)
+                            time.sleep(8)
+                            log("✅ 页面加载完成")
                         except Exception as e:
-                            log(f"⚠️ 重新打开页面失败: {e}")
-                            # 最后尝试普通 open
+                            log(f"⚠️ sb.open_url 失败: {e}, 尝试 reconnect...")
                             try:
-                                sb.open_url(server_url)
-                                time.sleep(5)
+                                sb.uc_open_with_reconnect(server_url, reconnect_time=6)
+                                time.sleep(8)
+                                log("✅ reconnect 成功")
                             except Exception as e2:
-                                log(f"❌ open_url 也失败: {e2}")
+                                log(f"❌ 所有重连方式都失败: {e2}")
                                 send_tg(f"❌ 浏览器崩溃: {str(e2)[:100]}", server_name, before_lt)
                                 continue
 
