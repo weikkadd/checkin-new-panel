@@ -12,23 +12,29 @@ jobs:
       actions: write
       contents: read
     steps:
+      - name: 禁用 autocrlf（在 checkout 之前）
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+          git config --global core.safecrlf true
+
       - name: 检出代码
         uses: actions/checkout@v4
         with:
           lfs: false
 
-      - name: 禁用 autocrlf 防止文件压缩
+      - name: 验证文件完整性
         run: |
-          git config --global core.autocrlf false
-          git config --global core.eol lf
           cd gaming4free-renew
           for f in renew.py config.py utils.py cooldown.py tg_notify.py; do
             if [ -f "$f" ]; then
               LINE_COUNT=$(wc -l < "$f")
               echo "$f: $LINE_COUNT lines"
               if [ "$LINE_COUNT" -lt 10 ]; then
-                echo "ERROR: $f is corrupted, restoring from git..."
-                git checkout HEAD -- "$f"
+                echo "ERROR: $f is corrupted, restoring from git blob..."
+                COMMIT=$(git rev-parse HEAD)
+                git show "$COMMIT:gaming4free-renew/$f" > "$f.tmp"
+                mv "$f.tmp" "$f"
                 LINE_COUNT=$(wc -l < "$f")
                 echo "Restored: $f has $LINE_COUNT lines"
               fi
