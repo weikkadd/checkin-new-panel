@@ -67,13 +67,23 @@ jobs:
       - name: 配置 TUIC 代理桥接
         run: |
           echo "🚀 下载 tuic-client..."
-          # 使用更通用的下载方式，并检查文件有效性
-          curl -L "https://github.com/EAimTY/tuic/releases/download/tuic-client-1.0.0/tuic-client-1.0.0-x86_64-unknown-linux-gnu" -o tuic-client || \
-          curl -L "https://github.com/EAimTY/tuic/releases/download/1.0.0/tuic-client-1.0.0-x86_64-unknown-linux-gnu" -o tuic-client
+          # 尝试多个可能的下载路径
+          URLS=(
+            "https://github.com/EAimTY/tuic/releases/download/tuic-client-1.0.0/tuic-client-1.0.0-x86_64-unknown-linux-gnu"
+            "https://github.com/EAimTY/tuic/releases/download/1.0.0/tuic-client-1.0.0-x86_64-unknown-linux-gnu"
+          )
+          for url in "${URLS[@]}"; do
+            echo "尝试下载: $url"
+            curl -L "$url" -o tuic-client
+            if file tuic-client | grep -q "ELF"; then
+              echo "✅ 下载成功"
+              break
+            fi
+          done
           
-          if grep -q "Not Found" tuic-client; then
-            echo "❌ 下载链接失效，尝试备用链接..."
-            curl -L "https://github.com/EAimTY/tuic/releases/download/tuic-client-1.0.0/tuic-client-1.0.0-x86_64-unknown-linux-gnu" -o tuic-client
+          if ! file tuic-client | grep -q "ELF"; then
+            echo "❌ 所有下载链接均失效或文件损坏"
+            exit 1
           fi
           
           chmod +x tuic-client
@@ -105,8 +115,23 @@ jobs:
           
           echo "⚡ 启动 TUIC 客户端..."
           ./tuic-client -c tuic_config.json > tuic.log 2>&1 &
-          sleep 5
-          cat tuic.log
+          
+          echo "⏳ 等待代理启动并检查可用性..."
+          MAX_RETRIES=10
+          for ((i=1; i<=MAX_RETRIES; i++)); do
+            if curl -s --socks5 127.0.0.1:1080 https://api.ip.sb/ip > /dev/null; then
+              echo "✅ TUIC 代理已就绪"
+              curl -s --socks5 127.0.0.1:1080 https://api.ip.sb/ip
+              break
+            fi
+            echo "等待代理中 ($i/$MAX_RETRIES)..."
+            sleep 3
+            if [ $i -eq $MAX_RETRIES ]; then
+              echo "❌ 代理启动超时，查看日志:"
+              cat tuic.log
+              exit 1
+            fi
+          done
 
       - name: 执行续期
         env:
