@@ -333,30 +333,109 @@ def main():
                         send_tg("❌ 未找到续期按钮", server_name, before_lt)
                         account_finished = True
                     else:
-                        # 等待 Turnstile
-                        log("⏳ 等待 Turnstile 验证...")
-                        for tw in range(20):
+                        # 等 2 秒让 modal 弹出
+                        time.sleep(2)
+
+                        # 诊断: 打印当前所有按钮
+                        try:
+                            modal_btns = sb.driver.execute_script("""
+                                var btns = document.querySelectorAll('button');
+                                var arr = [];
+                                for (var i = 0; i < btns.length; i++) {
+                                    var t = (btns[i].innerText || btns[i].textContent || '').trim();
+                                    if (t) arr.push(t.substring(0, 80));
+                                }
+                                return arr;
+                            """)
+                            log(f"🐛 点击后页面按钮: {modal_btns}")
+                        except: pass
+
+                        # 处理弹窗: 优先级 Enable Ads > Confirm > Turnstile
+                        # 1. 如果有 "Enable Ads" 按钮, 先点它启用广告
+                        try:
+                            enable_ads = sb.driver.execute_script("""
+                                var btns = document.querySelectorAll('button');
+                                for (var i = 0; i < btns.length; i++) {
+                                    var t = (btns[i].innerText || '').trim().toLowerCase();
+                                    if (t.indexOf('enable ads') !== -1 || t.indexOf('start earning') !== -1) {
+                                        btns[i].scrollIntoView({block: 'center'});
+                                        btns[i].click();
+                                        return 'clicked:' + btns[i].innerText.trim();
+                                    }
+                                }
+                                return false;
+                            """)
+                            if enable_ads:
+                                log(f"🎬 点击了 Enable Ads 按钮: {enable_ads}")
+                                time.sleep(5)  # 等广告流程启动
+                        except Exception as e:
+                            log(f"⚠️ Enable Ads 点击失败: {e}")
+
+                        # 2. 处理 "Maybe later" 等关闭弹窗 (不点, 直接关)
+                        #    不处理, 让它自己消失
+
+                        # 3. 等待 Turnstile / Confirm / 广告流程
+                        log("⏳ 等待 Turnstile / 广告流程...")
+                        captcha_passed = False
+                        for tw in range(60):  # 延长到 60 秒, 广告需要时间
                             time.sleep(1)
                             try:
+                                # 检查 Turnstile
                                 ts_present = bool(sb.driver.execute_script("""
                                     return !!document.querySelector('iframe[src*="challenges.cloudflare.com"]')
                                         || !!document.querySelector('.cf-turnstile')
-                                        || (document.body && document.body.innerText.includes("请验证您是真人"));
+                                        || (document.body && document.body.innerText.toLowerCase().indexOf("verify") !== -1);
                                 """))
-                            except:
-                                ts_present = False
-                            if ts_present:
-                                log("🛡️ 检测到 Turnstile，处理验证...")
-                                try:
-                                    sb.uc_gui_click_captcha()
-                                    time.sleep(3)
-                                    log("✅ Turnstile 验证完成")
-                                except:
-                                    log("⚠️ uc_gui_click_captcha 失败")
-                                break
-                        
-                        time.sleep(5)
-                        
+                                if ts_present and not captcha_passed:
+                                    log(f"🛡️ [第 {tw+1} 秒] 检测到 Turnstile，处理验证...")
+                                    try:
+                                        sb.uc_gui_click_captcha()
+                                        time.sleep(3)
+                                        captcha_passed = True
+                                        log("✅ Turnstile 验证完成")
+                                    except Exception as e:
+                                        log(f"⚠️ uc_gui_click_captcha 失败: {e}")
+
+                                # 检查广告 iframe (可能需要等广告播完)
+                                ad_iframes = sb.driver.execute_script("""
+                                    var ifs = document.querySelectorAll('iframe');
+                                    var arr = [];
+                                    for (var i = 0; i < ifs.length; i++) {
+                                        var src = ifs[i].src || '';
+                                        if (src.indexOf('doubleclick') !== -1 || src.indexOf('googlesyndication') !== -1
+                                            || src.indexOf('youtube') !== -1 || src.indexOf('ad') !== -1) {
+                                            arr.push(src.substring(0, 100));
+                                        }
+                                    }
+                                    return arr;
+                                """)
+                                if ad_iframes and tw % 10 == 0:
+                                    log(f"📺 [第 {tw+1} 秒] 检测到广告 iframe: {ad_iframes[0]}")
+
+                                # 检查是否有 Confirm 按钮 (Turnstile 通过后可能需要确认)
+                                confirm_clicked = sb.driver.execute_script("""
+                                    var btns = document.querySelectorAll('button');
+                                    for (var i = 0; i < btns.length; i++) {
+                                        var t = (btns[i].innerText || '').trim().toLowerCase();
+                                        if ((t === 'confirm' || t === 'ok' || t === 'yes' || t === 'continue' || t === 'verify')
+                                            && !btns[i].disabled) {
+                                            btns[i].scrollIntoView({block: 'center'});
+                                            btns[i].click();
+                                            return 'clicked:' + btns[i].innerText.trim();
+                                        }
+                                    }
+                                    return false;
+                                """)
+                                if confirm_clicked:
+                                    log(f"✅ 点击确认按钮: {confirm_clicked}")
+                                    time.sleep(2)
+
+                            except Exception as e:
+                                if tw % 10 == 0:
+                                    log(f"⚠️ [第 {tw+1} 秒] 异常: {e}")
+
+                        time.sleep(3)
+
                         # 刷新页面
                         log("🔄 刷新页面验证续期结果...")
                         sb.refresh()
