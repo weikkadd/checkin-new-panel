@@ -17,33 +17,22 @@ jobs:
         with:
           lfs: false
 
-      - name: 修复换行符（防止 autocrlf 压缩文件）
+      - name: 强制修复 Python 文件换行符
         run: |
           cd gaming4free-renew
-          python3 -c "
-          import os
-          f = 'renew.py'
-          if os.path.exists(f):
-              with open(f, 'rb') as fh:
-                  c = fh.read()
-              if b'\r\n' in c:
-                  c = c.replace(b'\r\n', b'\n')
-              lines = c.split(b'\n')
-              if len(lines) < 10:
-                  print(f'WARNING: File has only {len(lines)} lines, fixing...')
-                  # 文件被压缩，尝试从 git 恢复
-                  import subprocess
-                  subprocess.run(['git', 'checkout', 'HEAD', '--', f], check=True)
-                  with open(f, 'rb') as fh:
-                      c = fh.read()
-                  c = c.replace(b'\r\n', b'\n')
-                  with open(f, 'wb') as fh:
-                      fh.write(c)
-                  lines = c.split(b'\n')
-                  print(f'Recovered: {len(lines)} lines')
-              else:
-                  print(f'OK: File has {len(lines)} lines')
-          "
+          # 检查文件是否被压缩
+          LINE_COUNT=$(wc -l < renew.py)
+          echo "renew.py has $LINE_COUNT lines"
+          if [ "$LINE_COUNT" -lt 10 ]; then
+            echo "ERROR: File is corrupted, restoring from git..."
+            git checkout HEAD -- renew.py
+            LINE_COUNT=$(wc -l < renew.py)
+            echo "Restored: $LINE_COUNT lines"
+          fi
+          # 确保使用 LF 换行符
+          sed -i 's/\r$//' renew.py
+          LINE_COUNT=$(wc -l < renew.py)
+          echo "Final: $LINE_COUNT lines"
 
       - name: 配置 Python
         uses: actions/setup-python@v4
@@ -54,29 +43,19 @@ jobs:
         uses: browser-actions/setup-chrome@v1
         with:
           chrome-version: stable
-        id: chrome
 
       - name: 安装系统依赖
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y \
-            xvfb xdotool wget \
+          sudo apt-get install -y xvfb xdotool wget \
             libnss3 libatk1.0-0 libatk-bridge2.0-0 \
             libcups2 libdrm2 libxkbcommon0 \
             libxcomposite1 libxrandr2 libgbm1 \
             libpango-1.0-0 libcairo2 fonts-liberation
 
-      - name: 验证 Chrome 和 Chromedriver
-        run: |
-          echo "[INFO] Chrome: $(google-chrome --version)"
-          echo "[INFO] Chrome path: $(which google-chrome)"
-          echo "[INFO] Chromedriver: $(chromedriver --version)"
-          echo "[INFO] Chromedriver path: $(which chromedriver)"
-
       - name: 安装 Python 依赖
         working-directory: gaming4free-renew
-        run: |
-          pip install seleniumbase
+        run: pip install seleniumbase
 
       - name: 配置代理 (sing-box)
         continue-on-error: true
@@ -88,15 +67,7 @@ jobs:
             sleep 5
             if curl -x "socks5://127.0.0.1:1080" --max-time 5 -s https://api.ipify.org > /dev/null 2>&1; then
               echo "IS_PROXY=true" >> $GITHUB_ENV
-              echo "PROXY_SERVER=socks5://127.0.0.1:1080" >> $GITHUB_ENV
-              echo "Proxy IP: $(curl -x 'socks5://127.0.0.1:1080' -s https://api.ipify.org)"
-            else
-              echo "IS_PROXY=false" >> $GITHUB_ENV
-              echo "PROXY_SERVER=" >> $GITHUB_ENV
             fi
-          else
-            echo "IS_PROXY=false" >> $GITHUB_ENV
-            echo "PROXY_SERVER=" >> $GITHUB_ENV
           fi
 
       - name: 运行续期脚本
@@ -108,8 +79,6 @@ jobs:
           GAME4FREE_COOKIE: ${{ secrets.GAME4FREE_COOKIE }}
           GAME4FREE_ACCOUNTS: ${{ secrets.GAME4FREE_ACCOUNTS }}
           GAME4FREE_ACCOUNT: ${{ secrets.GAME4FREE_ACCOUNT }}
-          IS_PROXY: ${{ env.IS_PROXY }}
-          PROXY_SERVER: ${{ env.PROXY_SERVER }}
           SB_SKIP_DRIVER_UPDATE: "true"
           CHROME_BIN: /opt/hostedtoolcache/bin/google-chrome
         working-directory: gaming4free-renew
