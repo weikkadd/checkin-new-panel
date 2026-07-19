@@ -84,12 +84,22 @@ def main():
                             success_in_this_server = True
                             break
 
-                        # 检查冷却
+                        # 检查冷却 (针对 05:00 cd 格式优化)
                         cooldown_info = check_button_cooldown(driver)
+                        # 尝试直接从页面解析 "05:00 cd" 这种文本
+                        try:
+                            page_text = driver.execute_script("return document.body.innerText")
+                            if "05:00" in page_text and "cd" in page_text:
+                                log("⏳ 侦测到 5 分钟冷却期 (05:00 cd)，强制等待 310 秒...")
+                                time.sleep(310)
+                                driver.refresh(); time.sleep(10)
+                                continue
+                        except: pass
+
                         if cooldown_info and cooldown_info.get('cooldown'):
                             remaining = cooldown_info.get('remaining', 120)
                             log(f"⏳ 按钮冷却中，等待 {remaining} 秒...")
-                            time.sleep(remaining + 5)
+                            time.sleep(remaining + 10)
                             driver.refresh(); time.sleep(10)
                             continue
 
