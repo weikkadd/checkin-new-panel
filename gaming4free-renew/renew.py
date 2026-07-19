@@ -395,40 +395,102 @@ def main():
                                     log(f"💀 浏览器崩溃")
                                     break
 
-                        # ★ 关键修复: 先等 15 秒让 Turnstile 自然通过 (住宅 IP 经常自动通过)
-                        # 不要急着 reconnect, reconnect 会覆盖 modal 导致续期未提交
+                        # ★ 关键修复: 等 Turnstile 通过, 然后立即点击 modal 里的提交按钮
+                        # Turnstile 通过 = iframe 消失, 但 modal 还在, 需要点 Confirm/Submit
                         if turnstile_appeared:
-                            log("⏳ 等 15 秒让 Turnstile 自然通过 (住宅 IP 经常自动通过)...")
-                            for wait_tw in range(15):
+                            log("⏳ 等 Turnstile 通过 (最多 20 秒, 检测 iframe 消失)...")
+                            turnstile_passed = False
+                            for wait_tw in range(20):
                                 time.sleep(1)
                                 try:
-                                    # 检查 Turnstile 是否还在
                                     ts_still = bool(sb.driver.execute_script("""
                                         return !!document.querySelector('iframe[src*="challenges.cloudflare.com"]')
                                             || !!document.querySelector('.cf-turnstile');
                                     """))
-                                    # 检查 modal 是否还在 (Enable Ads / Cancel 按钮存在 = modal 还在)
-                                    modal_still = bool(sb.driver.execute_script("""
-                                        var btns = document.querySelectorAll('button');
-                                        for (var i = 0; i < btns.length; i++) {
-                                            var t = (btns[i].innerText || '').trim().toLowerCase();
-                                            if (t.indexOf('enable ads') !== -1 || t.indexOf('cancel') !== -1) return true;
-                                        }
-                                        return false;
-                                    """))
-                                    if not ts_still and not modal_still:
-                                        log(f"🎉 [第 {wait_tw+1} 秒] Turnstile + modal 都消失了, 续期已提交!")
+                                    if not ts_still:
+                                        log(f"✅ [第 {wait_tw+1} 秒] Turnstile 已通过 (iframe 消失)")
+                                        turnstile_passed = True
                                         break
                                     if wait_tw % 5 == 4:
-                                        log(f"⏳ [第 {wait_tw+1} 秒] 仍在等待 (Turnstile={ts_still}, modal={modal_still})...")
+                                        log(f"⏳ [第 {wait_tw+1} 秒] Turnstile 仍在...")
                                 except Exception as e:
                                     if "Connection refused" in str(e):
-                                        log(f"💀 等待时浏览器崩溃, 转入 reconnect")
+                                        log(f"💀 等待 Turnstile 时浏览器崩溃")
                                         break
                                     log(f"⚠️ 等待异常: {str(e)[:80]}")
 
-                        # ★ 用 uc_open_with_reconnect 兜底 (如果 Turnstile 没自然通过)
-                        log("🔄 用 uc_open_with_reconnect 兜底处理 Turnstile + 重连...")
+                            # ★ Turnstile 通过后, 立即点击 modal 里的提交按钮
+                            if turnstile_passed:
+                                log("🖱️ Turnstile 通过, 查找 modal 里的提交按钮...")
+                                time.sleep(2)  # 等 modal 更新
+
+                                # 打印 modal 里所有按钮 (诊断)
+                                try:
+                                    modal_btns = sb.driver.execute_script("""
+                                        var btns = document.querySelectorAll('button');
+                                        var arr = [];
+                                        for (var i = 0; i < btns.length; i++) {
+                                            var t = (btns[i].innerText || '').trim();
+                                            if (t && btns[i].offsetParent !== null) arr.push(t.substring(0, 80));
+                                        }
+                                        return arr;
+                                    """)
+                                    log(f"🐛 Turnstile 通过后可见按钮: {modal_btns}")
+                                except: pass
+
+                                # 点击提交按钮 (排除 Cancel/Maybe later/Enable Ads)
+                                try:
+                                    submit_clicked = sb.driver.execute_script("""
+                                        var btns = document.querySelectorAll('button');
+                                        var keywords = ['confirm', 'submit', 'renew', 'claim', 'continue', 'ok', 'yes', 'verify', 'get free time', 'apply', 'watch', 'start', 'earn', '+ 90', '+90'];
+                                        var exclude = ['cancel', 'later', 'enable ads', 'sign out', 'back to'];
+                                        for (var i = 0; i < btns.length; i++) {
+                                            var t = (btns[i].innerText || '').trim().toLowerCase();
+                                            if (btns[i].disabled) continue;
+                                            if (btns[i].offsetParent === null) continue;
+                                            // 排除关键词
+                                            var excluded = false;
+                                            for (var e = 0; e < exclude.length; e++) {
+                                                if (t.indexOf(exclude[e]) !== -1) { excluded = true; break; }
+                                            }
+                                            if (excluded) continue;
+                                            // 匹配关键词
+                                            for (var k = 0; k < keywords.length; k++) {
+                                                if (t.indexOf(keywords[k]) !== -1) {
+                                                    btns[i].scrollIntoView({block: 'center'});
+                                                    btns[i].click();
+                                                    return 'clicked:' + btns[i].innerText.trim();
+                                                }
+                                            }
+                                        }
+                                        return false;
+                                    """)
+                                    if submit_clicked:
+                                        log(f"✅ 点击提交按钮: {submit_clicked}")
+                                        time.sleep(8)  # 等后端处理
+
+                                        # 检查 modal 是否关闭
+                                        try:
+                                            modal_still = bool(sb.driver.execute_script("""
+                                                var btns = document.querySelectorAll('button');
+                                                for (var i = 0; i < btns.length; i++) {
+                                                    var t = (btns[i].innerText || '').trim().toLowerCase();
+                                                    if (t.indexOf('enable ads') !== -1 || t.indexOf('cancel') !== -1) return true;
+                                                }
+                                                return false;
+                                            """))
+                                            if not modal_still:
+                                                log("🎉 modal 已关闭, 续期已提交!")
+                                            else:
+                                                log("⚠️ modal 仍在, 可能需要再点其他按钮")
+                                        except: pass
+                                    else:
+                                        log("⚠️ 未找到提交按钮, modal 按钮列表见上")
+                                except Exception as e:
+                                    log(f"⚠️ 点击提交按钮失败: {e}")
+
+                        # ★ 用 uc_open_with_reconnect 兜底 (处理可能的浏览器断连)
+                        log("🔄 用 uc_open_with_reconnect 兜底重连...")
 
                         reconnect_ok = False
                         for reconnect_attempt in range(3):
