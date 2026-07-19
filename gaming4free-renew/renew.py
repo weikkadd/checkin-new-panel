@@ -395,13 +395,40 @@ def main():
                                     log(f"💀 浏览器崩溃")
                                     break
 
-                        # ★ 用 uc_open_with_reconnect 重新打开页面
-                        # SeleniumBase 会在 reconnect 时自动处理 Turnstile (不崩溃)
-                        # reconnect_time=12 给足时间让 Turnstile 自然通过
+                        # ★ 关键修复: 先等 15 秒让 Turnstile 自然通过 (住宅 IP 经常自动通过)
+                        # 不要急着 reconnect, reconnect 会覆盖 modal 导致续期未提交
                         if turnstile_appeared:
-                            log("🔄 用 uc_open_with_reconnect 处理 Turnstile + 重连...")
-                        else:
-                            log("🔄 没检测到 Turnstile, 直接 reconnect 验证续期结果...")
+                            log("⏳ 等 15 秒让 Turnstile 自然通过 (住宅 IP 经常自动通过)...")
+                            for wait_tw in range(15):
+                                time.sleep(1)
+                                try:
+                                    # 检查 Turnstile 是否还在
+                                    ts_still = bool(sb.driver.execute_script("""
+                                        return !!document.querySelector('iframe[src*="challenges.cloudflare.com"]')
+                                            || !!document.querySelector('.cf-turnstile');
+                                    """))
+                                    # 检查 modal 是否还在 (Enable Ads / Cancel 按钮存在 = modal 还在)
+                                    modal_still = bool(sb.driver.execute_script("""
+                                        var btns = document.querySelectorAll('button');
+                                        for (var i = 0; i < btns.length; i++) {
+                                            var t = (btns[i].innerText || '').trim().toLowerCase();
+                                            if (t.indexOf('enable ads') !== -1 || t.indexOf('cancel') !== -1) return true;
+                                        }
+                                        return false;
+                                    """))
+                                    if not ts_still and not modal_still:
+                                        log(f"🎉 [第 {wait_tw+1} 秒] Turnstile + modal 都消失了, 续期已提交!")
+                                        break
+                                    if wait_tw % 5 == 4:
+                                        log(f"⏳ [第 {wait_tw+1} 秒] 仍在等待 (Turnstile={ts_still}, modal={modal_still})...")
+                                except Exception as e:
+                                    if "Connection refused" in str(e):
+                                        log(f"💀 等待时浏览器崩溃, 转入 reconnect")
+                                        break
+                                    log(f"⚠️ 等待异常: {str(e)[:80]}")
+
+                        # ★ 用 uc_open_with_reconnect 兜底 (如果 Turnstile 没自然通过)
+                        log("🔄 用 uc_open_with_reconnect 兜底处理 Turnstile + 重连...")
 
                         reconnect_ok = False
                         for reconnect_attempt in range(3):
