@@ -128,8 +128,8 @@ def parse_countdown_seconds(match_str):
 def get_remaining_time(sb):
     """获取页面剩余时间（秒）和文本"""
     try:
-        # 用 IIFE 包裹, 避免 Illegal return statement
-        page_text = sb.execute_script("(function(){return document.body?document.body.innerText.substring(0,2000):'';})();")
+        # 用 sb.driver.execute_script 走标准 Selenium (支持顶层 return)
+        page_text = sb.driver.execute_script("return document.body?document.body.innerText.substring(0,2000):'';")
         if not page_text:
             return ("(未知)", 0)
         time_matches = re.findall(r'(\d{1,2}:\d{2}:\d{2})', page_text)
@@ -145,7 +145,7 @@ def get_remaining_time(sb):
 def check_button_cooldown(sb):
     """检查续期按钮是否冷却"""
     try:
-        page_text = sb.execute_script("(function(){return document.body?document.body.innerText.substring(0,2000):'';})();")
+        page_text = sb.driver.execute_script("return document.body?document.body.innerText.substring(0,2000):'';")
         if not page_text:
             return None
         
@@ -172,17 +172,15 @@ def check_button_cooldown(sb):
         
         # 策略2: 检查按钮 disabled 状态
         try:
-            disabled = bool(sb.execute_script("""
-                (function() {
-                    var btns = document.querySelectorAll('button');
-                    for (var i = 0; i < btns.length; i++) {
-                        var txt = (btns[i].innerText || btns[i].textContent || '').trim();
-                        if (txt.indexOf('90') !== -1 || txt.indexOf('+ 90') !== -1 || txt.indexOf('+90') !== -1) {
-                            return btns[i].disabled;
-                        }
+            disabled = bool(sb.driver.execute_script("""
+                var btns = document.querySelectorAll('button');
+                for (var i = 0; i < btns.length; i++) {
+                    var txt = (btns[i].innerText || btns[i].textContent || '').trim();
+                    if (txt.indexOf('90') !== -1 || txt.indexOf('+ 90') !== -1 || txt.indexOf('+90') !== -1) {
+                        return btns[i].disabled;
                     }
-                    return false;
-                })();
+                }
+                return false;
             """))
             if disabled:
                 log("⏳ 检测到按钮 disabled 状态")
@@ -286,7 +284,25 @@ def main():
                     log("⏳ 等待页面完全渲染以获取初始时间...")
                     before_lt, before_ls = get_remaining_time(sb)
                     log(f"⏱️ 续期前剩余时长: {before_lt} ({before_ls}秒)")
-                    
+
+                    # 诊断: 打印页面文本前 500 字符, 看按钮是否存在
+                    try:
+                        diag_text = sb.driver.execute_script("return document.body?document.body.innerText.substring(0,500):'';")
+                        log(f"🐛 页面文本前 500 字符:\n{diag_text}")
+                        # 列出所有 button 文字
+                        btn_texts = sb.driver.execute_script("""
+                            var btns = document.querySelectorAll('button');
+                            var arr = [];
+                            for (var i = 0; i < btns.length; i++) {
+                                var t = (btns[i].innerText || btns[i].textContent || '').trim();
+                                if (t) arr.push(t.substring(0, 50));
+                            }
+                            return arr;
+                        """)
+                        log(f"🐛 页面所有按钮: {btn_texts}")
+                    except Exception as e:
+                        log(f"⚠️ 诊断失败: {e}")
+
                     # 检查按钮冷却
                     cooldown_info = check_button_cooldown(sb)
                     if cooldown_info and cooldown_info.get('cooldown'):
@@ -296,21 +312,19 @@ def main():
                     
                     # 点击 +90 min
                     log("🖱️ 正在寻找并点击 +90 分钟续期按钮...")
-                    click_result = sb.execute_script("""
-                        (function() {
-                            var btns = document.querySelectorAll('button');
-                            for (var i = 0; i < btns.length; i++) {
-                                var txt = (btns[i].innerText || btns[i].textContent || '').trim();
-                                if (txt.indexOf('90') !== -1 || txt.indexOf('+ 90') !== -1 || txt.indexOf('+90') !== -1) {
-                                    btns[i].scrollIntoView({block: 'center'});
-                                    btns[i].removeAttribute('disabled');
-                                    btns[i].style.cssText += '; pointer-events:auto !important;';
-                                    btns[i].click();
-                                    return 'clicked:' + txt;
-                                }
+                    click_result = sb.driver.execute_script("""
+                        var btns = document.querySelectorAll('button');
+                        for (var i = 0; i < btns.length; i++) {
+                            var txt = (btns[i].innerText || btns[i].textContent || '').trim();
+                            if (txt.indexOf('90') !== -1 || txt.indexOf('+ 90') !== -1 || txt.indexOf('+90') !== -1) {
+                                btns[i].scrollIntoView({block: 'center'});
+                                btns[i].removeAttribute('disabled');
+                                btns[i].style.cssText += '; pointer-events:auto !important;';
+                                btns[i].click();
+                                return 'clicked:' + txt;
                             }
-                            return 'not-found';
-                        })();
+                        }
+                        return 'not-found';
                     """)
                     log(f"🎯 点击结果: {click_result}")
                     
@@ -324,12 +338,10 @@ def main():
                         for tw in range(20):
                             time.sleep(1)
                             try:
-                                ts_present = bool(sb.execute_script("""
-                                    (function() {
-                                        return !!document.querySelector('iframe[src*="challenges.cloudflare.com"]')
-                                            || !!document.querySelector('.cf-turnstile')
-                                            || (document.body && document.body.innerText.includes("请验证您是真人"));
-                                    })();
+                                ts_present = bool(sb.driver.execute_script("""
+                                    return !!document.querySelector('iframe[src*="challenges.cloudflare.com"]')
+                                        || !!document.querySelector('.cf-turnstile')
+                                        || (document.body && document.body.innerText.includes("请验证您是真人"));
                                 """))
                             except:
                                 ts_present = False
