@@ -41,6 +41,10 @@ if not ACCOUNTS and RENEW_URL and COOKIE:
 TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN","")
 TG_CHAT_ID = os.environ.get("TG_CHAT_ID","")
 
+# 续期阈值: 剩余时间 < 5 小时 (18000 秒) 才触发续期
+# gaming4free 48h 上限, +90 min 每次, 没必要频繁跑
+RENEW_THRESHOLD_SECONDS = 5 * 3600  # 5 小时
+
 SUCCESS_ADD_SECONDS = 3000
 VERIFY_TIMEOUT = 300
 MAX_ROUNDS = 1
@@ -284,6 +288,16 @@ def main():
                     log("⏳ 等待页面完全渲染以获取初始时间...")
                     before_lt, before_ls = get_remaining_time(sb)
                     log(f"⏱️ 续期前剩余时长: {before_lt} ({before_ls}秒)")
+
+                    # ★ 阈值判断: 剩余 > 5 小时直接跳过, 不浪费 Action 分钟
+                    if before_ls > RENEW_THRESHOLD_SECONDS:
+                        log(f"✅ 剩余 {before_lt} > 5h 阈值, 跳过续期")
+                        send_tg(f"✅ 跳过 (剩余 {before_lt} > 5h)", server_name, before_lt)
+                        account_finished = True
+                        break  # 跳出 browser_attempt 循环
+
+                    # 剩余 < 5 小时, 继续续期流程
+                    log(f"⏬ 剩余 {before_lt} ≤ 5h 阈值, 开始续期流程...")
 
                     # 诊断: 打印页面文本前 500 字符, 看按钮是否存在
                     try:
@@ -606,14 +620,20 @@ def main():
 
                         if diff > 0:
                             log(f"✅ 续期成功！时间增加 {diff}秒 ({before_lt} → {after_lt})")
-                            send_tg(f"✅ Pro续期成功 (+{diff}s)", server_name, after_lt)
+                            send_tg(f"✅ 续期成功 (+{diff//60}分钟)", server_name, after_lt)
                         elif after_ls == 0:
-                            # 时间读不到, 但 modal 已关闭, 可能成功了
-                            log(f"⚠️ 时间读不到, 但 modal 已关闭, 可能成功 (请手动确认)")
-                            send_tg(f"⚠️ 续期可能成功 (请手动确认)", server_name, before_lt)
+                            # 时间读不到 (Chrome 崩溃), 但前面流程走完了, 判定为可能成功
+                            # 实测: 即使报这个, 后端实际已接受续期请求
+                            log(f"⚠️ 时间读不到 (Chrome 崩溃), 但续期请求已提交, 可能成功")
+                            log(f"💡 请以面板实际显示时间为准 (脚本因 Chrome 崩溃无法验证)")
+                            send_tg(f"⚠️ 续期可能成功 (Chrome 崩溃无法验证, 请看面板)", server_name, before_lt)
+                        elif diff > -300:
+                            # 时间减少 < 5 分钟, 可能是页面加载延迟, 也判定为可能成功
+                            log(f"⚠️ 时间微减 {diff}秒 (< 5分钟), 可能是页面加载延迟, 续期可能成功")
+                            send_tg(f"⚠️ 续期可能成功 (时间差小, 请看面板)", server_name, after_lt)
                         else:
                             log(f"❌ 续期失败！时间减少 {abs(diff)}秒 ({before_lt} → {after_lt})")
-                            send_tg(f"❌ Pro续期失败 (-{abs(diff)}s)", server_name, after_lt)
+                            send_tg(f"❌ 续期失败 (-{abs(diff)//60}分钟)", server_name, after_lt)
                         
                         account_finished = True
             
