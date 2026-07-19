@@ -222,13 +222,10 @@ def main():
             server_url = BASE_URL + server_url
 
         for browser_attempt in range(max_browser_retries):
-            sb = None
             try:
                 log(f"🚀 正在启动浏览器 (第 {browser_attempt+1}/{max_browser_retries} 次尝试)...")
 
-                sb = SB(uc=True, headless=False, browser='chrome', agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-
-                with sb:
+                with SB(uc=True, headless=False, browser='chrome', agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36") as sb:
                     log(f"🌐 正在访问续期页面 (第 {browser_attempt+1}/{max_browser_retries} 次尝试): {server_url}")
                     sb.open_url(server_url)
                     log(f"📄 当前页面标题: {sb.get_title()}")
