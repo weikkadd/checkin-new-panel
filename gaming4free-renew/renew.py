@@ -985,16 +985,95 @@ def main():
                     log("⏳ 等待 Turnstile 验证通过...")
                     time.sleep(5)
                     
-                    # === 循环点击 +90 min 直到达到 48h cap ===
-                    MAX_CAP_SECONDS = 48 * 3600
-                    RENEW_RETRIES = 10
+                    # === 单次续期流程（不循环轰炸）===
+                    log("🔑 开始单次续期流程...")
                     
-                    for renew_round in range(RENEW_RETRIES):
-                        lt, ls = get_remaining_time(sb)
-                        if ls >= MAX_CAP_SECONDS - 60:
-                            log(f"✅ 已达到 48h cap ({lt})，停止续期")
-                            send_tg("✅ 已达48h上限", server_name, lt)
-                            account_finished = True
+                    # Step 1: 获取续期前时间
+                    before_lt, before_ls = get_remaining_time(sb)
+                    log(f"⏱️ 续期前剩余时长: {before_lt} ({before_ls}秒)")
+                    
+                    # Step 2: 检查按钮冷却
+                    cooldown_info = check_button_cooldown(sb)
+                    if cooldown_info and cooldown_info.get('cooldown'):
+                        remaining = cooldown_info.get('remaining', 0)
+                        log(f"⏳ 按钮冷却中，剩余 {remaining}秒，等待...")
+                        # 等待冷却结束
+                        waited = 0
+                        while waited < remaining and waited < 600:
+                            time.sleep(min(10, remaining - waited))
+                            waited += 10
+                            cooldown_info = check_button_cooldown(sb)
+                            if not (cooldown_info and cooldown_info.get('cooldown')):
+                                break
+                    
+                    # Step 3: 点击 +90 min 按钮
+                    click_result = sb.execute_script("""
+                        var btns = document.querySelectorAll('button');
+                        for (var i = 0; i < btns.length; i++) {
+                            var txt = (btns[i].innerText || btns[i].textContent || '').trim();
+                            if (txt.indexOf('90') !== -1 || txt.indexOf('+ 90') !== -1 || txt.indexOf('+90') !== -1) {
+                                btns[i].scrollIntoView({block: 'center'});
+                                btns[i].removeAttribute('disabled');
+                                btns[i].style.cssText += '; pointer-events:auto !important;';
+                                btns[i].click();
+                                return 'clicked:' + txt;
+                            }
+                        }
+                        return 'not-found';
+                    """)
+                    log(f"🎯 点击结果: {click_result}")
+                    
+                    if click_result == 'not-found':
+                        log("❌ 未找到 +90 min 按钮，跳过本轮")
+                        send_tg("❌ 未找到续期按钮", server_name, before_lt)
+                        account_finished = True
+                    else:
+                        # Step 4: 等待 Turnstile 验证
+                        log("⏳ 等待 Turnstile 验证...")
+                        for turnstile_wait in range(20):
+                            time.sleep(1)
+                            try:
+                                ts_present = bool(sb.execute_script("""
+                                    return !!document.querySelector('iframe[src*="challenges.cloudflare.com"]')
+                                        || !!document.querySelector('.cf-turnstile')
+                                        || (document.body && document.body.innerText.includes("请验证您是真人"));
+                                """))
+                            except:
+                                ts_present = False
+                            if ts_present:
+                                log("🛡️ 检测到 Turnstile，处理验证...")
+                                try:
+                                    sb.uc_gui_click_captcha()
+                                    time.sleep(3)
+                                    log("✅ Turnstile 验证完成")
+                                except:
+                                    log("⚠️ uc_gui_click_captcha 失败")
+                                break
+                        
+                        # Step 5: 等待页面响应
+                        time.sleep(5)
+                        
+                        # Step 6: 刷新页面获取最新时间
+                        log("🔄 刷新页面验证续期结果...")
+                        sb.refresh()
+                        time.sleep(5)
+                        
+                        # Step 7: 获取续期后时间
+                        after_lt, after_ls = get_remaining_time(sb)
+                        diff = after_ls - before_ls
+                        
+                        log(f"⏱️ 续期后时间: {after_lt} ({after_ls}秒)，增加: {diff}秒")
+                        
+                        # Step 8: 判断成功与否
+                        if diff > 0:
+                            log(f"✅ 续期成功！时间增加 {diff}秒 ({before_lt} → {after_lt})")
+                            send_tg(f"✅ Pro续期成功 (+{diff}s)", server_name, after_lt)
+                        else:
+                            log(f"❌ 续期失败！时间减少 {abs(diff)}秒 ({before_lt} → {after_lt})")
+                            send_tg(f"❌ Pro续期失败 (-{abs(diff)}s)", server_name, after_lt)
+                        
+                        account_finished = True
+                                        account_finished = True
                             break
                         
                         cooldown_info = check_button_cooldown(sb)
