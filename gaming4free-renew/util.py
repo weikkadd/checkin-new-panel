@@ -24,14 +24,23 @@ def get_time(dr):
         tm=re.findall(r'(\d{1,2}:\d{2}:\d{2})',pt)
         if tm:
             log(f"🔍 所有匹配时间: {tm}")
+            # 优先匹配精确关键词附近的 HH:MM:SS
             for line in pt.split('\n'):
                 ll=line.lower()
-                if any(kw in ll for kw in ['expire','remain','end','next','due']):
+                # 只匹配这些明确的时间语义，不匹配 generic 'remaining'
+                if any(kw in ll for kw in ['expires','time left','server time','renewal','next renewal','cooldown']):
                     lt=re.findall(r'(\d{1,2}:\d{2}:\d{2})',line)
                     if lt:
-                        log(f"✅ 选中关键字附近: {lt[0]} (行: {line.strip()[:100]})")
+                        log(f"✅ 选中精确关键词: {lt[0]} (行: {line.strip()[:100]})")
                         return(lt[0],pars_s(lt[0]))
-            log(f"⚠️ 未找到关键字，使用第一个: {tm[0]}")
+            # 回退：找第一个超过1小时的大时间（服务器剩余时间通常 > 1h）
+            # 过滤掉 00:03:00 这类短倒计时
+            valid=[t for t in tm if pars_s(t)>=3600]
+            if valid:
+                best=max(valid,key=pars_s)
+                log(f"✅ 回退选最大有效时间: {best} ({pars_s(best)}s)")
+                return(best,pars_s(best))
+            log(f"⚠️ 未找到有效时间，使用第一个: {tm[0]}")
             return(tm[0],pars_s(tm[0]))
         return("(未找到)",0)
     except: return("(错误)",0)
