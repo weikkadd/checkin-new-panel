@@ -17,31 +17,38 @@ jobs:
         with:
           lfs: false
 
-      - name: 从 git blob 恢复所有 Python 文件（绕过 checkout autocrlf）
+      - name: 强制恢复 Python 文件（绕过 autocrlf）
         run: |
           cd gaming4free-renew
           COMMIT=$(git rev-parse HEAD)
+          
+          # 对每个文件：先检查，如果被压缩就从 git blob 恢复
           for f in renew.py config.py utils.py cooldown.py tg_notify.py; do
             if [ -f "$f" ]; then
-              LINE_COUNT=$(wc -l < "$f")
-              echo "$f: $LINE_COUNT lines (pre-restore)"
-              if [ "$LINE_COUNT" -lt 10 ]; then
-                echo "RESTORING $f from git blob..."
-                git show "$COMMIT:gaming4free-renew/$f" > "$f.restored"
-                mv "$f.restored" "$f"
-                LINE_COUNT=$(wc -l < "$f")
-                echo "$f: $LINE_COUNT lines (restored)"
+              LC=$(wc -l < "$f")
+              echo "$f: $LC lines"
+              if [ "$LC" -lt 10 ]; then
+                echo "  => RESTORING from git blob..."
+                git show "$COMMIT:gaming4free-renew/$f" > "$f.new"
+                # 强制 LF 换行
+                sed 's/\r//g' "$f.new" > "$f.fixed"
+                mv "$f.fixed" "$f"
+                LC=$(wc -l < "$f")
+                echo "  => Restored: $f has $LC lines"
+                # 验证：检查是否包含关键代码
+                if grep -q "def main" "$f"; then
+                  echo "  => Verified: contains 'def main'"
+                else
+                  echo "  => ERROR: missing 'def main'!"
+                fi
               fi
             fi
           done
-          # 确保 LF 换行符
-          for f in renew.py config.py utils.py cooldown.py tg_notify.py; do
-            if [ -f "$f" ]; then
-              sed -i 's/\r$//' "$f"
-            fi
-          done
-          echo "=== Final line counts ==="
-          wc -l renew.py config.py utils.py cooldown.py tg_notify.py
+          
+          echo "=== Final state ==="
+          ls -la *.py
+          wc -l *.py
+          head -3 renew.py
 
       - name: 配置 Python
         uses: actions/setup-python@v4
