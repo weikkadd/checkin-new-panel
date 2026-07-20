@@ -48,15 +48,41 @@ def main():
                     log(f"🌐 访问页面: {server_url}")
                     driver.get(server_url)
                     
-                    if server_cookie:
-                        log("🍪 注入 Cookie...")
-                        for item in server_cookie.split(";"):
-                            item = item.strip()
-                            if "=" in item:
-                                name, value = item.split("=", 1)
-                                try: driver.add_cookie({"name": name.strip(), "value": value.strip(), "domain": ".gaming4free.net", "path": "/"})
-                                except: pass
-                        driver.refresh(); time.sleep(10)
+                        if server_cookie:
+                            log("🍪 注入 Cookie...")
+                            for item in server_cookie.split(";"):
+                                item = item.strip()
+                                if "=" in item:
+                                    name, value = item.split("=", 1)
+                                    try: driver.add_cookie({"name": name.strip(), "value": value.strip(), "domain": ".gaming4free.net", "path": "/"})
+                                    except: pass
+                            driver.refresh(); time.sleep(10)
+
+                    # 诊断: 检查页面状态
+                    diag = driver.execute_script("""
+                        var info = {
+                            livewire: !!window.Livewire,
+                            livewireComps: window.Livewire ? window.Livewire.all().length : 0,
+                            alpine: !!window.Alpine,
+                            pageText: document.body ? document.body.innerText.substring(0, 800) : '',
+                            buttonsWith90: [],
+                            anyIframe: !!document.querySelector('iframe')
+                        };
+                        var btns = document.querySelectorAll('button');
+                        for (var i = 0; i < btns.length; i++) {
+                            var t = (btns[i].innerText || '').trim();
+                            if (t.indexOf('90') !== -1) {
+                                info.buttonsWith90.push({
+                                    text: t,
+                                    disabled: btns[i].disabled,
+                                    visible: btns[i].offsetParent !== null,
+                                    className: btns[i].className
+                                });
+                            }
+                        }
+                        return JSON.stringify(info);
+                    """)
+                    log(f"  诊断: {diag}")
 
                     current_round = 0
                     while current_round < MAX_ROUNDS:
@@ -125,17 +151,31 @@ def main():
                         except Exception as e:
                             log(f"⚠️ 触发续期异常: {e}")
 
-                        # 处理验证码
-                        time.sleep(5)
-                        try:
-                            if driver.find_elements('css selector', 'iframe[src*="challenges.cloudflare.com"]'):
-                                log("🛡️ 等待 Turnstile 验证...")
-                                for _ in range(30):
-                                    if not driver.find_elements('css selector', 'iframe[src*="challenges.cloudflare.com"]'):
-                                        log("✅ Turnstile 已通过")
+                        # 处理 Turnstile - 等它出现然后尝试自动点击
+                        log("🛡️ 检查 Turnstile...")
+                        time.sleep(3)
+                        turnstile_appeared = False
+                        for ts_wait in range(15):
+                            has_ts = len(driver.find_elements('css selector', 'iframe[src*="challenges.cloudflare.com"]')) > 0
+                            if has_ts:
+                                turnstile_appeared = True
+                                log(f"  检测到 Turnstile (第{ts_wait+1}秒)，尝试自动点击...")
+                                try:
+                                    sb.uc_gui_click_captcha()
+                                    log("  uc_gui_click_captcha 已执行")
+                                    time.sleep(5)
+                                except Exception as ex:
+                                    log(f"  uc_gui_click_captcha 失败: {ex}")
+                                # 检查是否通过了
+                                for check in range(10):
+                                    if len(driver.find_elements('css selector', 'iframe[src*="challenges.cloudflare.com"]')) == 0:
+                                        log("  Turnstile 已通过!")
                                         break
-                                    time.sleep(1)
-                        except: pass
+                                    time.sleep(2)
+                                break
+                            time.sleep(1)
+                        if not turnstile_appeared:
+                            log("  未检测到 Turnstile")
                         
                         # 深度广告监测与等待
                         log("🎬 监测广告播放中...")
