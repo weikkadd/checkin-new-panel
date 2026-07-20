@@ -29,39 +29,31 @@ def main():
         ok=False
         for bt in range(MAX_TRIES):
             if ok: break
-            sb=None; dr=None
             try:
                 log(f"🚀 浏览器 (尝试 {bt+1})")
-                sb=SB(uc=True,headless=False,browser='chrome',
-                      agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-                dr=sb.driver
-                dr.set_page_load_timeout(120)
-                log(f"🌐 访问: {su}")
-                dr.get(su)
-                log(f"📄 标题: {dr.title}")
-                if sc:
-                    log("🍪 注入 Cookie")
-                    for it in sc.split(";"):
-                        it=it.strip()
-                        if "=" in it:
-                            n,v=it.split("=",1)
-                            try: dr.add_cookie({"name":n.strip(),"value":v.strip(),"domain":".gaming4free.net","path":"/","secure":True})
-                            except: pass
-                    dr.refresh(); time.sleep(10)
-                do_rounds(dr,sn,sc)
+                with SB(uc=True,headless=False,browser='chrome',
+                        agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36") as sb:
+                    dr=sb.driver
+                    dr.set_page_load_timeout(120)
+                    log(f"🌐 访问: {su}")
+                    dr.get(su)
+                    log(f"📄 标题: {dr.title}")
+                    if sc:
+                        log("🍪 注入 Cookie")
+                        for it in sc.split(";"):
+                            it=it.strip()
+                            if "=" in it:
+                                n,v=it.split("=",1)
+                                try: dr.add_cookie({"name":n.strip(),"value":v.strip(),"domain":".gaming4free.net","path":"/","secure":True})
+                                except: pass
+                        dr.refresh(); time.sleep(10)
+                    do_rounds(dr,sn,sc)
             except Exception as e:
                 log(f"❌ 异常: {e}")
                 try: scr(sb,"err")
                 except: pass
                 send_tg(f"❌ 异常: {e}",sn)
                 break
-            finally:
-                if dr:
-                    try: dr.quit()
-                    except: pass
-                if sb:
-                    try: sb.quit()
-                    except: pass
 
 def do_rounds(dr,sn,sc):
     ok=False
