@@ -12,34 +12,36 @@ jobs:
       actions: write
       contents: read
     steps:
-      - name: 禁用 autocrlf（在 checkout 之前）
-        run: |
-          git config --global core.autocrlf false
-          git config --global core.eol lf
-          git config --global core.safecrlf true
-
       - name: 检出代码
         uses: actions/checkout@v4
         with:
           lfs: false
 
-      - name: 验证文件完整性
+      - name: 从 git blob 恢复所有 Python 文件（绕过 checkout autocrlf）
         run: |
           cd gaming4free-renew
+          COMMIT=$(git rev-parse HEAD)
           for f in renew.py config.py utils.py cooldown.py tg_notify.py; do
             if [ -f "$f" ]; then
               LINE_COUNT=$(wc -l < "$f")
-              echo "$f: $LINE_COUNT lines"
+              echo "$f: $LINE_COUNT lines (pre-restore)"
               if [ "$LINE_COUNT" -lt 10 ]; then
-                echo "ERROR: $f is corrupted, restoring from git blob..."
-                COMMIT=$(git rev-parse HEAD)
-                git show "$COMMIT:gaming4free-renew/$f" > "$f.tmp"
-                mv "$f.tmp" "$f"
+                echo "RESTORING $f from git blob..."
+                git show "$COMMIT:gaming4free-renew/$f" > "$f.restored"
+                mv "$f.restored" "$f"
                 LINE_COUNT=$(wc -l < "$f")
-                echo "Restored: $f has $LINE_COUNT lines"
+                echo "$f: $LINE_COUNT lines (restored)"
               fi
             fi
           done
+          # 确保 LF 换行符
+          for f in renew.py config.py utils.py cooldown.py tg_notify.py; do
+            if [ -f "$f" ]; then
+              sed -i 's/\r$//' "$f"
+            fi
+          done
+          echo "=== Final line counts ==="
+          wc -l renew.py config.py utils.py cooldown.py tg_notify.py
 
       - name: 配置 Python
         uses: actions/setup-python@v4
