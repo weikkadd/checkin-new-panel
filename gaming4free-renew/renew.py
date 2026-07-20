@@ -122,13 +122,10 @@ def do_rounds(dr,sn,sc):
         log("🔄 强制刷新页面...")
         dr.refresh(); time.sleep(8)
         al,as_=get_time(dr)
-        df=as_-bs
+        df=int(as_)-int(bs)
         elapsed=time.time()-pre_ts
         log(f"⏱️ 续期后: {al} ({as_}秒), 增加: {df}秒, 耗时: {elapsed:.0f}s")
-        # 诊断：检查页面是否有错误消息
-        if df<=0:
-            err=dr.execute_script("return document.body?document.body.innerText.substring(0,500):'';")
-            if err: log(f"⚠️ 页面内容片段: {err[:200]}")
+        if df>0:
             log(f"✅ 续期成功! +{df}s ({bl}→{al})")
             send_tg(f"✅ Pro续期成功 (+{df}s)",sn,al)
             log(f"⏳ 等5分钟冷却后继续下一轮...")
@@ -136,6 +133,8 @@ def do_rounds(dr,sn,sc):
             dr.refresh(); time.sleep(5)
             continue
         else:
+            err=dr.execute_script("return document.body?document.body.innerText.substring(0,500):'';")
+            if err: log(f"⚠️ 页面内容片段: {err[:200]}")
             log(f"❌ 续期失败，继续下一轮"); time.sleep(10)
     if ok:
         log("✅ 已达到目标时长，停止续期")
