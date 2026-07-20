@@ -105,45 +105,67 @@ def main():
                                 time.sleep(310); driver.refresh(); time.sleep(10); continue
                         except: pass
 
-                        # 核心策略：三层续期触发
+                        # 核心策略：多层续期触发
                         log("🎯 触发续期...")
                         try:
                             lw_result = driver.execute_script("""
                                 // 1. 找到包含 '90' 的按钮
                                 var btns = document.querySelectorAll('button');
-                                var btn = null, btnText = '';
+                                var btn = null;
                                 for (var i = 0; i < btns.length; i++) {
                                     var t = (btns[i].innerText || btns[i].textContent || '').trim();
                                     if (t.indexOf('90') !== -1 && btns[i].offsetParent !== null) {
-                                        btn = btns[i]; btnText = t; break;
+                                        btn = btns[i]; break;
                                     }
                                 }
                                 if (!btn) return 'no-button';
 
-                                // 2. 在 Livewire 组件列表中匹配按钮文本
+                                // 获取按钮完整 HTML (诊断用)
+                                var btnHtml = btn.outerHTML.substring(0, 300);
+
+                                // 策略1: 通过 DOM 向上找 wire:id, 再用 Livewire.find
                                 if (window.Livewire) {
+                                    var el = btn;
+                                    while (el && !el.hasAttribute('wire:id')) { el = el.parentElement; }
+                                    if (el) {
+                                        var wid = el.getAttribute('wire:id');
+                                        var comp = window.Livewire.find(wid);
+                                        if (comp) {
+                                            try { comp.call('extend'); return 'livewire-dom:' + wid; } catch(e) {}
+                                        }
+                                    }
+                                    // 策略2: 遍历所有组件尝试 extend
                                     var comps = window.Livewire.all();
                                     for (var c = 0; c < comps.length; c++) {
                                         try {
                                             var snap = comps[c].snapshot;
-                                            if (snap && snap.html && snap.html.indexOf(btnText) !== -1) {
-                                                comps[c].call('extend');
-                                                return 'livewire:' + comps[c].id;
+                                            if (snap && snap.data && snap.data.methods) {
+                                                var methods = snap.data.methods;
+                                                for (var m = 0; m < methods.length; m++) {
+                                                    if (methods[m] === 'extend') {
+                                                        comps[c].call('extend');
+                                                        return 'livewire-method:' + comps[c].id;
+                                                    }
+                                                }
                                             }
                                         } catch(e) {}
                                     }
-                                    // 通用 fallback: 遍历所有组件
-                                    for (var c2 = 0; c2 < comps.length; c2++) {
-                                        try { comps[c2].call('extend'); return 'livewire-generic:' + c2; }
-                                        catch(e) {}
-                                    }
                                 }
 
-                                // 3. 降级: JS 原生 click
+                                // 策略3: 多种方式点击按钮
                                 btn.scrollIntoView({block: 'center'});
                                 btn.removeAttribute('disabled');
+                                btn.style.pointerEvents = 'auto';
+                                // MouseEvent 方式
+                                ['mousedown','mouseup','click'].forEach(function(type){
+                                    btn.dispatchEvent(new MouseEvent(type, {bubbles:true, cancelable:true, view:window}));
+                                });
+                                // wire:click 事件
+                                btn.dispatchEvent(new CustomEvent('wire:click', {bubbles:true}));
+                                // 原生 click
                                 btn.click();
-                                return 'native-click';
+
+                                return 'native-click|' + btnHtml;
                             """)
                             log(f"  结果: {lw_result}")
                             if lw_result == 'no-button':
