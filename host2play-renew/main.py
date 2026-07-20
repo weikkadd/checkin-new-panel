@@ -126,8 +126,8 @@ def debug_dump(page, label=""):
         pass
     try:
         src_path = SHOT_DIR / f"debug_src_{label}_{int(time.time())}.txt"
-        src_path.write_text(page.html[:5000], encoding="utf-8")
-        log.info(f"页面源码已保存: {src_path} (前5000字符)")
+        src_path.write_text(page.html[:8000], encoding="utf-8")
+        log.info(f"页面源码已保存: {src_path} (前8000字符)")
     except Exception:
         pass
 
@@ -144,7 +144,6 @@ def solve_recaptcha_audio(page) -> bool:
     log.info("开始处理 reCAPTCHA...")
 
     # ========== 第一步：使用 get_frame 找到 reCAPTCHA iframe ==========
-    # DrissionPage 4.x 使用 page.get_frame() 而不是 page.switch_to.frame()
     recaptcha_frame = None
 
     # 方法1：通过 src 属性查找
@@ -178,7 +177,6 @@ def solve_recaptcha_audio(page) -> bool:
         return False
 
     # ========== 第二步：在 iframe 内找到并点击 checkbox ==========
-    # DrissionPage 4.x：iframe 对象可以直接调用 ele() 和 click()
     checkbox_found = False
     try:
         # 尝试多种 checkbox 选择器
@@ -211,8 +209,8 @@ def solve_recaptcha_audio(page) -> bool:
         return False
 
     if not checkbox_found:
-        log.warning("未找到 checkbox，可能已自动通过")
-        # 仍然尝试继续，也许不需要验证码
+        log.info("未找到 checkbox，可能已自动通过")
+        # 仍然继续，也许不需要验证码
         time.sleep(3)
         return True
 
@@ -521,51 +519,106 @@ def run_one(label: str, renew_url: str, cookie_str: str):
                 "new": f"{old_sec // 3600}h",
             }
 
-        # 查找续期按钮
+        # 查找续期按钮 - 更宽松的选择器
         renew_btn = None
-        for sel in ["text:Renew server", "css:button.purple", "xpath://button[contains(text(), 'Renew')]"]:
+        btn_texts = ["Renew server", "Renew", "Extend", "Continue"]
+        for btn_text in btn_texts:
             try:
-                renew_btn = page.ele(sel, timeout=10)
+                renew_btn = page.ele(f"text:{btn_text}", timeout=5)
                 if renew_btn:
+                    log.info(f"找到续期按钮: text:{btn_text}")
                     break
+            except Exception:
+                pass
+        
+        # 如果没找到文字按钮，尝试紫色按钮
+        if not renew_btn:
+            try:
+                renew_btn = page.ele('css:button.purple', timeout=5)
+                if renew_btn:
+                    log.info("找到紫色续期按钮")
+            except Exception:
+                pass
+        
+        # 最后尝试 xpath
+        if not renew_btn:
+            try:
+                renew_btn = page.ele('xpath://button[contains(text(), "Renew")]', timeout=5)
+                if renew_btn:
+                    log.info("找到续期按钮 (xpath)")
             except Exception:
                 pass
 
         if not renew_btn:
-            # 尝试更多选择器
-            page.get_screenshot(path=str(SHOT_DIR / f"error_{label}.png"))
+            # 保存截图调试
+            page.get_screenshot(path=str(SHOT_DIR / f"error_{label}_no_btn.png"))
             log.error("未找到续期按钮，已保存截图")
+            debug_dump(page, "no_renew_btn")
             return {"label": label, "sid": server_id, "ok": False, "msg": "未找到按钮"}
 
         log.info("点击续期按钮...")
         renew_btn.click()
-        time.sleep(8)
+        
+        # 等待更长时间让 reCAPTCHA 出现
+        log.info("等待 reCAPTCHA 出现...")
+        time.sleep(10)
 
         # 处理 reCAPTCHA
         captcha_passed = solve_recaptcha_audio(page)
         if captcha_passed:
-            log.info("reCAPTCHA 通过，等待确认按钮出现...")
-            time.sleep(5)
-
-            # 查找确认按钮
+            log.info("reCAPTCHA 通过，寻找确认按钮...")
+            
+            # 保存当前页面状态
+            debug_dump(page, "after_captcha")
+            
+            # 查找确认按钮 - 更宽松的策略
             renew_confirm = None
-            for sel in ["css:button.purple", "xpath://button[contains(text(), 'Confirm')]", "xpath://button[contains(text(), 'Yes')]"]:
+            
+            # 方法1：查找包含 Confirm/Yes 的按钮
+            confirm_texts = ["Confirm", "Yes", "Continue", "OK", "Extend"]
+            for txt in confirm_texts:
                 try:
-                    renew_confirm = page.ele(sel, timeout=10)
+                    renew_confirm = page.ele(f"text:{txt}", timeout=5)
                     if renew_confirm and renew_confirm.is_displayed():
+                        log.info(f"找到确认按钮: text:{txt}")
                         break
+                except Exception:
+                    pass
+            
+            # 方法2：查找紫色按钮（通常是确认按钮）
+            if not renew_confirm:
+                try:
+                    purple_btns = page.eles('css:button.purple')
+                    if purple_btns:
+                        renew_confirm = purple_btns[0]
+                        log.info(f"找到紫色按钮作为确认按钮")
+                except Exception:
+                    pass
+            
+            # 方法3：查找任何可见的按钮
+            if not renew_confirm:
+                try:
+                    all_buttons = page.eles('css:button')
+                    visible_buttons = [b for b in all_buttons if b.is_displayed()]
+                    if visible_buttons:
+                        renew_confirm = visible_buttons[0]
+                        log.info(f"使用第一个可见按钮: {visible_buttons[0].text[:30] if visible_buttons[0].text else 'unknown'}")
                 except Exception:
                     pass
 
             if renew_confirm:
                 log.info("点击确认按钮...")
                 renew_confirm.click()
-                time.sleep(15)
+                log.info("等待续期处理...")
+                time.sleep(20)  # 增加到20秒
+            else:
+                log.info("未找到确认按钮，等待页面自动处理...")
+                time.sleep(15)  # 至少等待15秒
 
             # 刷新页面同步状态
             log.info("刷新页面同步状态...")
             page.get(renew_url)
-            time.sleep(8)
+            time.sleep(10)
 
             # 检查新时间
             _, new_time, new_sec = get_server_info(page)
@@ -581,6 +634,7 @@ def run_one(label: str, renew_url: str, cookie_str: str):
                 }
             else:
                 log.warning(f"时间未增加: {old_sec} -> {new_sec}")
+                debug_dump(page, "time_not_increased")
                 return {"label": label, "sid": server_id, "ok": False, "msg": f"时间未增加 ({old_sec}s -> {new_sec}s)"}
         else:
             log.warning("reCAPTCHA 未能通过")
