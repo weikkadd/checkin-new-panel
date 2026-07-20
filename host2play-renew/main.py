@@ -29,7 +29,7 @@ WARP_PROXY = os.getenv("WARP_PROXY", "")
 PROXY_URL = os.getenv("PROXY_URL", "")
 RENEW_THRESHOLD_SECONDS = 25 * 3600  # 剩余超过25小时则跳过
 MAX_RETRY = 5
-PAGE_TIMEOUT = 60
+PAGE_TIMEOUT = 180  # 增加到180秒，避免Chrome渲染进程超时
 TG_TOKEN = os.getenv("TG_BOT_TOKEN", "")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
 TZ_CN = timezone(timedelta(hours=8))
@@ -356,8 +356,12 @@ def run_one(label: str, renew_url: str, cookie_str: str):
     co.set_argument("--disable-dev-shm-usage")
     co.set_argument("--disable-gpu")
     co.set_argument("--disable-blink-features=AutomationControlled")
+    co.set_argument("--disable-extensions")
+    co.set_argument("--disable-background-timer-throttling")
+    co.set_argument("--disable-renderer-backgrounding")
+    co.set_argument("--disable-backgrounding-occluded-windows")
     co.set_user_agent(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
     )
 
     # 代理配置
@@ -379,11 +383,11 @@ def run_one(label: str, renew_url: str, cookie_str: str):
     try:
         # 检查出口 IP
         try:
-            page.get("https://api.ip.sb/ip", timeout=10)
+            page.get("https://api.ip.sb/ip", timeout=15)
             ip = page.run_js("return document.body.innerText").strip()
             log.info(f"当前出口 IP: {ip}")
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"IP检查失败: {e}")
 
         log.info(f"正在访问: {renew_url}")
         page.get(renew_url)
@@ -394,7 +398,7 @@ def run_one(label: str, renew_url: str, cookie_str: str):
             log.info("注入 Cookie...")
             inject_cookies(page, cookie_str)
             page.get(renew_url)
-            time.sleep(8)
+            time.sleep(10)
 
         # 获取服务器信息
         server_id, old_time, old_sec = get_server_info(page)
@@ -414,7 +418,7 @@ def run_one(label: str, renew_url: str, cookie_str: str):
         renew_btn = None
         for sel in ["text:Renew server", "css:button.purple", "xpath://button[contains(text(), 'Renew')]"]:
             try:
-                renew_btn = page.ele(sel, timeout=5)
+                renew_btn = page.ele(sel, timeout=10)
                 if renew_btn:
                     break
             except Exception:
@@ -428,18 +432,19 @@ def run_one(label: str, renew_url: str, cookie_str: str):
 
         log.info("点击续期按钮...")
         renew_btn.click()
-        time.sleep(5)
+        time.sleep(8)
 
         # 处理 reCAPTCHA
-        if solve_recaptcha_audio(page):
+        captcha_passed = solve_recaptcha_audio(page)
+        if captcha_passed:
             log.info("reCAPTCHA 通过，等待确认按钮出现...")
-            time.sleep(3)
+            time.sleep(5)
 
             # 查找确认按钮
             renew_confirm = None
             for sel in ["css:button.purple", "xpath://button[contains(text(), 'Confirm')]", "xpath://button[contains(text(), 'Yes')]"]:
                 try:
-                    renew_confirm = page.ele(sel, timeout=5)
+                    renew_confirm = page.ele(sel, timeout=10)
                     if renew_confirm and renew_confirm.is_displayed():
                         break
                 except Exception:
@@ -448,12 +453,12 @@ def run_one(label: str, renew_url: str, cookie_str: str):
             if renew_confirm:
                 log.info("点击确认按钮...")
                 renew_confirm.click()
-                time.sleep(10)
+                time.sleep(15)
 
             # 刷新页面同步状态
             log.info("刷新页面同步状态...")
             page.get(renew_url)
-            time.sleep(5)
+            time.sleep(8)
 
             # 检查新时间
             _, new_time, new_sec = get_server_info(page)
@@ -470,11 +475,12 @@ def run_one(label: str, renew_url: str, cookie_str: str):
             else:
                 log.warning(f"时间未增加: {old_sec} -> {new_sec}")
                 return {"label": label, "sid": server_id, "ok": False, "msg": f"时间未增加 ({old_sec}s -> {new_sec}s)"}
-
-        return {"label": label, "sid": server_id, "ok": False, "msg": "reCAPTCHA 流程未完成"}
+        else:
+            log.warning("reCAPTCHA 未能通过")
+            return {"label": label, "sid": server_id, "ok": False, "msg": "reCAPTCHA 流程未完成"}
 
     except Exception as e:
-        log.error(f"异常: {e}")
+        log.error(f"运行异常: {e}")
         return {"label": label, "sid": "Error", "ok": False, "msg": f"异常: {e}"}
     finally:
         try:
