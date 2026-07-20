@@ -79,32 +79,49 @@ def main():
                                 time.sleep(310); driver.refresh(); time.sleep(10); continue
                         except: pass
 
-                        # 核心策略：直接调用 Livewire API
-                        log("🎯 尝试直接通过 Livewire API 触发续期...")
+                        # 核心策略：三层续期触发
+                        log("🎯 触发续期...")
                         try:
-                            # 查找组件 ID 并调用 extend 方法
                             lw_result = driver.execute_script("""
-                                var btn = document.querySelector('button.rt-btn-free') || document.querySelector('button:contains("90")');
-                                if (!btn) {
-                                    var allBtns = document.querySelectorAll('button');
-                                    for(var i=0; i<allBtns.length; i++) {
-                                        if(allBtns[i].innerText.indexOf('90') !== -1) { btn = allBtns[i]; break; }
+                                // 1. 找到包含 '90' 的按钮
+                                var btns = document.querySelectorAll('button');
+                                var btn = null, btnText = '';
+                                for (var i = 0; i < btns.length; i++) {
+                                    var t = (btns[i].innerText || btns[i].textContent || '').trim();
+                                    if (t.indexOf('90') !== -1 && btns[i].offsetParent !== null) {
+                                        btn = btns[i]; btnText = t; break;
                                     }
                                 }
-                                if (btn && window.Livewire) {
-                                    var component = Livewire.find(btn.closest('[wire\\\\:id]').getAttribute('wire:id'));
-                                    if (component) {
-                                        component.call('extend');
-                                        return 'success';
+                                if (!btn) return 'no-button';
+
+                                // 2. 在 Livewire 组件列表中匹配按钮文本
+                                if (window.Livewire) {
+                                    var comps = window.Livewire.all();
+                                    for (var c = 0; c < comps.length; c++) {
+                                        try {
+                                            var snap = comps[c].snapshot;
+                                            if (snap && snap.html && snap.html.indexOf(btnText) !== -1) {
+                                                comps[c].call('extend');
+                                                return 'livewire:' + comps[c].id;
+                                            }
+                                        } catch(e) {}
+                                    }
+                                    // 通用 fallback: 遍历所有组件
+                                    for (var c2 = 0; c2 < comps.length; c2++) {
+                                        try { comps[c2].call('extend'); return 'livewire-generic:' + c2; }
+                                        catch(e) {}
                                     }
                                 }
-                                return 'fail';
+
+                                // 3. 降级: JS 原生 click
+                                btn.scrollIntoView({block: 'center'});
+                                btn.removeAttribute('disabled');
+                                btn.click();
+                                return 'native-click';
                             """)
-                            if lw_result == 'success':
-                                log("✅ Livewire API 调用成功")
-                            else:
-                                log("⚠️ Livewire 调用失败，回退到模拟点击")
-                                driver.execute_script("document.querySelector('button.rt-btn-free').click();")
+                            log(f"  结果: {lw_result}")
+                            if lw_result == 'no-button':
+                                log("⚠️ 未找到续期按钮")
                         except Exception as e:
                             log(f"⚠️ 触发续期异常: {e}")
 
@@ -130,9 +147,16 @@ def main():
                             # 检查是否有广告弹窗需要关闭
                             try:
                                 driver.execute_script("""
-                                    var closeBtns = document.querySelectorAll('[aria-label="Close"], .modal-close, button:contains("Close")');
+                                    var closeBtns = document.querySelectorAll('[aria-label="Close"], .modal-close');
                                     for(var i=0; i<closeBtns.length; i++) {
                                         if(closeBtns[i].offsetParent !== null) closeBtns[i].click();
+                                    }
+                                    // 额外: 文本匹配 Close 按钮
+                                    var allBtns2 = document.querySelectorAll('button');
+                                    for(var j=0; j<allBtns2.length; j++) {
+                                        if(allBtns2[j].innerText.indexOf('Close') !== -1 && allBtns2[j].offsetParent !== null) {
+                                            allBtns2[j].click();
+                                        }
                                     }
                                 """)
                             except: pass
