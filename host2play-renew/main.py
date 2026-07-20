@@ -489,6 +489,22 @@ def run_one(label: str, renew_url: str, cookie_str: str):
             pass
 
 
+def collect_accounts():
+    """收集账号配置"""
+    accounts = []
+    multi = os.getenv("H2P_ACCOUNTS", "").strip()
+    if multi:
+        for line in multi.splitlines():
+            parts = line.strip().split("|||")
+            if len(parts) >= 3:
+                accounts.append((parts[0].strip(), parts[1].strip(), parts[2].strip()))
+
+    if not accounts and RENEW_URL and COOKIE_STR:
+        accounts.append(("main", RENEW_URL, COOKIE_STR))
+
+    return accounts
+
+
 def run():
     """主运行函数"""
     accounts = collect_accounts()
@@ -510,31 +526,16 @@ def run():
         f"\U0001f4ca 总账号: {len(results)} | \u2705 {ok_count} | \u274c {len(results) - ok_count}",
         "",
     ]
+    default_msg = "成功"
     for r in results:
         status = "\u2705" if r.get("ok") else "\u274c"
         if r.get("new"):
             summary.append(f"\U0001f464 <b>{r['label']}</b> ({r.get('sid', 'Unknown')}): {status} {r['new']}")
         else:
-            summary.append(f"\U0001f464 <b>{r['label']}</b> ({r.get('sid', 'Unknown')}): {status} {r.get('msg', '\u6210\u529f')}")
+            summary.append(f"\U0001f464 <b>{r['label']}</b> ({r.get('sid', 'Unknown')}): {status} {r.get('msg', default_msg)}")
 
     tg("\n".join(summary))
     return all(r.get("ok") for r in results)
-
-
-def collect_accounts():
-    """收集账号配置"""
-    accounts = []
-    multi = os.getenv("H2P_ACCOUNTS", "").strip()
-    if multi:
-        for line in multi.splitlines():
-            parts = line.strip().split("|||")
-            if len(parts) >= 3:
-                accounts.append((parts[0].strip(), parts[1].strip(), parts[2].strip()))
-
-    if not accounts and RENEW_URL and COOKIE_STR:
-        accounts.append(("main", RENEW_URL, COOKIE_STR))
-
-    return accounts
 
 
 if __name__ == "__main__":
