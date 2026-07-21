@@ -152,23 +152,20 @@ return result;
 _LW_CLICK_JS = """
 var result = 'fail';
 try {
-    // 查找所有带 wire:click 属性的元素
     var btns = document.querySelectorAll('[wire\\\\:click]');
     for (var i = 0; i < btns.length; i++) {
         var val = btns[i].getAttribute('wire:click');
         if (val && (val.indexOf('extend') !== -1 || val.indexOf('renew') !== -1 || val.indexOf('refresh') !== -1)) {
-            // 确保按钮可见且启用
             var rect = btns[i].getBoundingClientRect();
             if (rect.width > 0 && rect.height > 0 && !btns[i].disabled) {
                 btns[i].scrollIntoView({block:'center'});
-                btns[i].dispatchEvent(new MouseEvent('mousedown',{{bubbles:true,cancelable:true}}));
-                btns[i].dispatchEvent(new MouseEvent('mouseup',{{bubbles:true,cancelable:true}}));
-                btns[i].dispatchEvent(new MouseEvent('click',{{bubbles:true,cancelable:true}}));
+                btns[i].dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}));
+                btns[i].dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true}));
+                btns[i].dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
                 return 'wire_click:' + val;
             }
         }
     }
-    // 备用: 查找按钮文字包含 90 和 min 的元素
     var allBtns = document.querySelectorAll('button, [role=button], [class*="btn"], [class*="Btn"], a[href*="extend"], a[href*="renew"]');
     for (var i = 0; i < allBtns.length; i++) {
         var t = (allBtns[i].innerText || allBtns[i].textContent || '').trim();
@@ -176,9 +173,9 @@ try {
             var rect = allBtns[i].getBoundingClientRect();
             if (rect.width > 0 && rect.height > 0 && !allBtns[i].disabled) {
                 allBtns[i].scrollIntoView({block:'center'});
-                allBtns[i].dispatchEvent(new MouseEvent('mousedown',{{bubbles:true,cancelable:true}}));
-                allBtns[i].dispatchEvent(new MouseEvent('mouseup',{{bubbles:true,cancelable:true}}));
-                allBtns[i].dispatchEvent(new MouseEvent('click',{{bubbles:true,cancelable:true}}));
+                allBtns[i].dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true}));
+                allBtns[i].dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true}));
+                allBtns[i].dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
                 return 'text_click:' + t.substring(0, 50);
             }
         }
