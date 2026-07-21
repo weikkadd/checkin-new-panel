@@ -18,11 +18,6 @@ def pars_s(ms):
     if m: return int(m.group(1))*3600
     return 0
 
-# ============================================================
-# Livewire v3/v4 组件遍历与方法调用的 JavaScript
-# 使用普通字符串（非模板字串）避免 Python f-string 冲突
-# ============================================================
-
 _LW_DIAGNOSE_JS = """
 var info = {};
 try {
@@ -32,7 +27,6 @@ try {
     info.has_dispatch = typeof window.Livewire.dispatch === 'function';
     info.components_all_fn = typeof (window.Livewire && window.Livewire.components && window.Livewire.components.all) === 'function';
 
-    // Livewire v3/v4 组件信息
     var compInfo = [];
     if (window.Livewire && window.Livewire.components && typeof window.Livewire.components.all === 'function') {
         var comps = window.Livewire.components.all();
@@ -45,6 +39,7 @@ try {
                 id: c.id || (c.__instance && c.__instance.id) || 'unknown',
                 has_wire: !!c.$wire,
                 wire_methods: [],
+                wire_data: [],
                 data_keys: [],
                 snapshot_keys: []
             };
@@ -52,13 +47,16 @@ try {
                 if (c.$wire) {
                     ci.wire_methods = Object.keys(c.$wire).filter(function(k){
                         return typeof c.$wire[k] === 'function';
-                    }).slice(0, 20);
+                    }).slice(0, 30);
+                    ci.wire_data = Object.keys(c.$wire).filter(function(k){
+                        return typeof c.$wire[k] !== 'function';
+                    }).slice(0, 30);
                 }
                 if (c.snapshot && c.snapshot.data) {
-                    ci.data_keys = Object.keys(c.snapshot.data).slice(0, 20);
+                    ci.data_keys = Object.keys(c.snapshot.data).slice(0, 30);
                 }
                 if (c.__instance && c.__instance.snapshot && c.__instance.snapshot.data) {
-                    ci.snapshot_keys = Object.keys(c.__instance.snapshot.data).slice(0, 20);
+                    ci.snapshot_keys = Object.keys(c.__instance.snapshot.data).slice(0, 30);
                 }
             } catch(e) {}
             compInfo.push(ci);
@@ -66,20 +64,34 @@ try {
     }
     info.components = compInfo;
 
-    // 页面按钮信息
     var wireBtns = document.querySelectorAll('[wire\\\\:click]');
     info.wire_click_buttons = [];
-    for (var i = 0; i < Math.min(wireBtns.length, 20); i++) {
+    for (var i = 0; i < Math.min(wireBtns.length, 30); i++) {
         info.wire_click_buttons.push(wireBtns[i].getAttribute('wire:click'));
     }
 
     var allBtns = document.querySelectorAll('button, [role=button]');
     info.total_buttons = allBtns.length;
     info.button_texts = [];
-    for (var i = 0; i < Math.min(allBtns.length, 20); i++) {
+    for (var i = 0; i < Math.min(allBtns.length, 30); i++) {
         var t = (allBtns[i].innerText || allBtns[i].textContent || '').trim();
         if (t) info.button_texts.push(t.substring(0, 80));
     }
+    
+    var renewBtns = [];
+    for (var i = 0; i < allBtns.length; i++) {
+        var t = (allBtns[i].innerText || allBtns[i].textContent || '').trim();
+        if (t.indexOf('90') !== -1 && t.indexOf('min') !== -1) {
+            renewBtns.push({
+                text: t,
+                wireClick: allBtns[i].getAttribute('wire:click'),
+                className: allBtns[i].className,
+                disabled: allBtns[i].disabled,
+                visible: allBtns[i].offsetParent !== null
+            });
+        }
+    }
+    info.renew_buttons = renewBtns;
 } catch(e) {
     info.error = e.message;
 }
@@ -96,38 +108,24 @@ try {
             var comp = comps[i];
             var compName = comp.name || (comp.__instance && comp.__instance.name) || 'unknown';
             try {
-                // 方法1: $wire.$call (Livewire v3 标准)
                 if (comp.$wire && typeof comp.$wire.$call === 'function') {
                     comp.$wire.$call('extend');
                     return 'v3_wire_call:' + compName;
                 }
             } catch(e) {}
             try {
-                // 方法2: $wire 上直接有 extend 方法
                 if (comp.$wire && typeof comp.$wire.extend === 'function') {
                     comp.$wire.extend();
                     return 'v3_wire_extend:' + compName;
                 }
             } catch(e) {}
             try {
-                // 方法3: 组件实例上有 extend 方法
                 if (typeof comp.extend === 'function') {
                     comp.extend();
                     return 'v3_direct:' + compName;
                 }
             } catch(e) {}
         }
-    }
-} catch(e) {}
-return result;
-"""
-
-_LW_DISPATCH_JS = """
-var result = 'fail';
-try {
-    if (window.Livewire && typeof window.Livewire.dispatch === 'function') {
-        window.Livewire.dispatch('extend');
-        return 'dispatch_extend';
     }
 } catch(e) {}
 return result;
@@ -159,8 +157,15 @@ try {
     for (var i = 0; i < btns.length; i++) {
         var val = btns[i].getAttribute('wire:click');
         if (val && (val.indexOf('extend') !== -1 || val.indexOf('renew') !== -1 || val.indexOf('refresh') !== -1)) {
-            btns[i].click();
-            return 'wire_click:' + val;
+            // 确保按钮可见且启用
+            var rect = btns[i].getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0 && !btns[i].disabled) {
+                btns[i].scrollIntoView({block:'center'});
+                btns[i].dispatchEvent(new MouseEvent('mousedown',{{bubbles:true,cancelable:true}}));
+                btns[i].dispatchEvent(new MouseEvent('mouseup',{{bubbles:true,cancelable:true}}));
+                btns[i].dispatchEvent(new MouseEvent('click',{{bubbles:true,cancelable:true}}));
+                return 'wire_click:' + val;
+            }
         }
     }
     // 备用: 查找按钮文字包含 90 和 min 的元素
@@ -168,8 +173,14 @@ try {
     for (var i = 0; i < allBtns.length; i++) {
         var t = (allBtns[i].innerText || allBtns[i].textContent || '').trim();
         if (t.indexOf('90') !== -1 && t.indexOf('min') !== -1) {
-            allBtns[i].click();
-            return 'text_click:' + t.substring(0, 50);
+            var rect = allBtns[i].getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0 && !allBtns[i].disabled) {
+                allBtns[i].scrollIntoView({block:'center'});
+                allBtns[i].dispatchEvent(new MouseEvent('mousedown',{{bubbles:true,cancelable:true}}));
+                allBtns[i].dispatchEvent(new MouseEvent('mouseup',{{bubbles:true,cancelable:true}}));
+                allBtns[i].dispatchEvent(new MouseEvent('click',{{bubbles:true,cancelable:true}}));
+                return 'text_click:' + t.substring(0, 50);
+            }
         }
     }
 } catch(e) {
@@ -181,7 +192,6 @@ return result;
 _GET_TIME_JS = """
 var result='';
 try{
-    // Livewire v3+: 使用 components.all()
     if(window.Livewire && window.Livewire.components && typeof window.Livewire.components.all === 'function'){
         var comps=window.Livewire.components.all();
         window._lw_comps_count=comps.length;
@@ -189,16 +199,13 @@ try{
             try{
                 var c=comps[i];
                 var data={};
-                // 从 snapshot.data 获取
                 if(c.snapshot && c.snapshot.data){
                     data=Object.assign({},data,c.snapshot.data);
                 }
-                // 从 __instance 获取
                 if(c.__instance && c.__instance.snapshot && c.__instance.snapshot.data){
                     data=Object.assign({},data,c.__instance.snapshot.data);
                 }
                 var allKeys=Object.keys(data);
-                // 调试: 存储第一个组件的所有键名
                 if(i===0){
                     window._livewire_keys=allKeys.join(',');
                     window._lw_component_names=comps.map(function(x){
@@ -222,7 +229,6 @@ try{
             }
         }
     }
-    // Livewire v2 兼容
     if(!result && window.Livewire && typeof window.Livewire.all === 'function'){
         var c2=window.Livewire.all;
         if(c2){
@@ -245,7 +251,6 @@ return result||'';
 def get_time(dr):
     """从页面提取服务器到期时间（秒）和显示字符串"""
     try:
-        # 方法1: 尝试从 Livewire 组件数据中获取
         pt=dr.execute_script(_GET_TIME_JS)
         if pt:
             secs=pars_s(pt)
@@ -254,24 +259,18 @@ def get_time(dr):
                 log(f"✅ 从 Livewire 数据获取: {pt} ({secs}s)")
                 return(f"{h:02d}:{m:02d}:{s:02d}",secs)
         
-        # 诊断：打印 Livewire 键名
         lk=dr.execute_script("return window._livewire_keys||'';")
         if lk: log(f"🔑 Livewire data keys: {lk}")
-        # 诊断：组件数量
         cc=dr.execute_script("return window._lw_comps_count||'';")
         if cc: log(f"🔧 Livewire 组件数量: {cc}")
-        # 诊断：组件名称
         cn=dr.execute_script("return window._lw_component_names||'';")
         if cn: log(f"🔧 Livewire 组件名称: {cn}")
-        # 诊断：错误信息
         er=dr.execute_script("return window._lw_err||'';")
         if er: log(f"⚠️ Livewire 诊断错误: {er}")
         
-        # 方法2: 从页面文本中提取
         pt=dr.execute_script("return document.body?document.body.innerText.substring(0,3000):'';")
         if not pt: return("(未知",0)
         
-        # 找包含 "remaining" 的行（这是服务器到期时间）
         for line in pt.split('\n'):
             ll=line.lower()
             if 'remaining' in ll:
@@ -280,7 +279,6 @@ def get_time(dr):
                     log(f"✅ remaining 行: {lt[0]} (行: {line.strip()[:100]})")
                     return(lt[0],pars_s(lt[0]))
         
-        # 回退: 找第一个 >= 1小时的时间（过滤短倒计时如 00:03:00）
         tm=re.findall(r'(\d{1,2}:\d{2}:\d{2})',pt)
         valid=[t for t in tm if pars_s(t)>=3600]
         if valid:
@@ -301,12 +299,10 @@ def get_time(dr):
 def livewire_extend(dr, su=None):
     """
     尝试通过 Livewire 调用 extend/renew 方法。
-    支持 Livewire v3/v4 和 v2 两种 API。
-    四层策略:
-      1. Livewire v3 $wire.$call / $wire.extend
-      2. Livewire.dispatch 全局事件
-      3. Livewire v2 c.call('extend')
-      4. wire:click 按钮点击 / 文字匹配点击
+    三层策略（dispatch 已移除，因为它不直接触发续期）:
+      1. Livewire v3 $wire.$call('extend') / $wire.extend
+      2. Livewire v2 c.call('extend')
+      3. wire:click 按钮点击 / 文字匹配点击（带完整事件链）
     返回 (success: bool, method_used: str)
     """
     # 第一层: Livewire v3/v4 $wire.$call
@@ -315,19 +311,13 @@ def livewire_extend(dr, su=None):
         log(f"✅ Livewire v3 extend 成功: {lr}")
         return (True, lr)
 
-    # 第二层: Livewire.dispatch 全局事件
-    lr2 = dr.execute_script(_LW_DISPATCH_JS)
-    if lr2 == 'dispatch_extend':
-        log(f"✅ Livewire dispatch 成功: {lr2}")
-        return (True, lr2)
-
-    # 第三层: Livewire v2 API (兼容旧版本)
+    # 第二层: Livewire v2 API
     lr3 = dr.execute_script(_LW_V2_JS)
     if lr3.startswith('v2_'):
         log(f"✅ Livewire v2 extend 成功: {lr3}")
         return (True, lr3)
 
-    # 第四层: wire:click 按钮点击 / 文字匹配
+    # 第三层: wire:click 按钮点击 / 文字匹配
     lr4 = dr.execute_script(_LW_CLICK_JS)
     if lr4.startswith('wire_click:') or lr4.startswith('text_click:'):
         log(f"✅ 按钮点击成功: {lr4}")
@@ -346,8 +336,14 @@ def livewire_extend(dr, su=None):
         if d.get('components'):
             for c in d['components']:
                 log(f"🔍 诊断: 组件[{c['idx']}] name={c['name']}, "
-                    f"has_wire={c['has_wire']}, wire方法={c['wire_methods']}, "
+                    f"id={c['id']}, has_wire={c['has_wire']}, "
+                    f"wire方法={c['wire_methods']}, "
+                    f"wire_data={c.get('wire_data',[])}, "
                     f"data_keys={c['data_keys']}")
+        if d.get('renew_buttons'):
+            for rb in d['renew_buttons']:
+                log(f"🔍 诊断: +90min按钮: text={rb['text']}, "
+                    f"wire:click={rb['wireClick']}, disabled={rb['disabled']}, visible={rb['visible']}")
     except:
         log(f"🔍 诊断原始: {diag_raw[:500]}")
 
