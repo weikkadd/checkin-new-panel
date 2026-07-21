@@ -81,21 +81,37 @@ def do_rounds(dr,sn,sc):
             bl,bs=get_time(dr)
             log(f"⏱️ 冷却后: {bl} ({bs}秒)")
         log("🖱️ 尝试触发续期...")
-        # 记录续期前时间戳，用于验证续期是否真的成功
+        # 记录续期前时间
         pre_ts=time.time()
+        pre_time=bs
         try:
-            # 直接点击 +90min 按钮
-            btn=dr.execute_script("""
-                var buttons=document.querySelectorAll('button,[role=button],[class*="btn"],[class*="Btn"]');
-                for(var i=0;i<buttons.length;i++){
-                    var t=(buttons[i].innerText||buttons[i].textContent||'').trim();
-                    if(t.indexOf('90')!==-1 && t.indexOf('min')!==-1){
-                        buttons[i].click();
-                        return'clicked_90min';
+            # 先尝试 Livewire extend 方法
+            lr=dr.execute_script("""
+                try{
+                    var c=Livewire.all;
+                    for(var i=0;i<c.length;i++){
+                        try{
+                            c[i].call('extend');
+                            return'success:'+i;
+                        }catch(e){}
                     }
-                }
-                return'not_found';""")
-            log(f"✅ 续期操作结果: {btn}")
+                }catch(e){}
+                return'fail_livewire';""")
+            if lr.startswith('success:'):
+                log(f"✅ Livewire extend 成功 (组件索引 {lr.split(':')[1]})")
+            else:
+                # Livewire 失败，回退到点击按钮
+                btn=dr.execute_script("""
+                    var buttons=document.querySelectorAll('button,[role=button],[class*="btn"],[class*="Btn"]');
+                    for(var i=0;i<buttons.length;i++){
+                        var t=(buttons[i].innerText||buttons[i].textContent||'').trim();
+                        if(t.indexOf('90')!==-1 && t.indexOf('min')!==-1){
+                            buttons[i].click();
+                            return'clicked_90min';
+                        }
+                    }
+                    return'not_found';""")
+                log(f"⚠️ Livewire 失败，回退点击按钮: {btn}")
         except Exception as e: log(f"⚠️ 续期异常: {e}")
         time.sleep(5)
         # 等 Turnstile
