@@ -5,7 +5,7 @@ host2play 自动续期脚本
 =====================
 - 使用 DrissionPage 自动化浏览器操作
 - 支持代理配置（家宽代理 / WARP）
-- 支持 reCAPTCHA 音频验证码识别
+- 广告视频播放后自动续期
 - 支持多账号批量续期
 """
 
@@ -27,8 +27,7 @@ RENEW_URL = os.getenv("H2P_RENEW_URL", "")
 COOKIE_STR = os.getenv("H2P_COOKIE", "")
 WARP_PROXY = os.getenv("WARP_PROXY", "")
 PROXY_URL = os.getenv("PROXY_URL", "")
-RENEW_THRESHOLD_SECONDS = 25 * 3600
-MAX_RETRY = 5
+RENEW_THRESHOLD_SECONDS = 25 * 3600  # 剩余超过25小时则跳过
 PAGE_TIMEOUT = 180
 TG_TOKEN = os.getenv("TG_BOT_TOKEN", "")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID", "")
@@ -124,244 +123,83 @@ def debug_dump(page, label=""):
         src_path = SHOT_DIR / f"debug_src_{label}_{int(time.time())}.txt"
         src_path.write_text(page.html[:20000], encoding="utf-8")
         log.info(f"页面源码已保存: {src_path} (前20000字符)")
+    except Exception:
+        pass
+
+
+def handle_ad_video(page):
+    """处理广告视频 - 点击播放并等待完成"""
+    log.info("等待广告视频出现...")
+    
+    # 等待视频播放器出现（最多等待30秒）
+    for wait in range(30):
+        try:
+            # 查找视频元素
+            video = page.ele('css:video', timeout=2)
+            if video:
+                log.info("找到视频元素")
+                break
+        except Exception:
+            pass
         
-        # 保存所有按钮信息
-        btns_path = SHOT_DIR / f"debug_btns_{label}_{int(time.time())}.txt"
-        all_buttons = page.eles('css:button')
-        btn_info = []
-        for i, btn in enumerate(all_buttons):
-            try:
-                text = btn.text[:50] if btn.text else "no text"
-                cls = btn.attr("class") or ""
-                disp = btn.is_displayed()
-                hid = btn.is_hidden()
-                btn_info.append(f"  btn[{i}]: text='{text}' class='{cls}' displayed={disp} hidden={hid}")
-            except Exception:
-                pass
-        btns_path.write_text("\n".join(btn_info), encoding="utf-8")
-        log.info(f"按钮列表已保存: {btns_path} ({len(all_buttons)}个按钮)")
-    except Exception as e:
-        log.warning(f"保存调试信息失败: {e}")
-
-
-def solve_recaptcha_audio(page) -> bool:
-    """解决 reCAPTCHA 音频验证码 - DrissionPage 4.x 兼容版"""
-    try:
-        import speech_recognition as sr
-        import pydub
-    except ImportError:
-        log.error("缺少依赖: SpeechRecognition 或 pydub")
-        return False
-
-    log.info("开始处理 reCAPTCHA...")
-
-    recaptcha_frame = None
-
-    # 方法1：通过 src 属性查找
-    log.info("尝试通过 src 属性查找 reCAPTCHA iframe...")
-    recaptcha_frame = page.get_frame('@src*="recaptcha"')
-    if recaptcha_frame:
-        log.info(f"找到 reCAPTCHA iframe")
-    else:
-        log.info("尝试通过 title 属性查找 reCAPTCHA iframe...")
-        recaptcha_frame = page.get_frame('@title*="recaptcha"')
-        if recaptcha_frame:
-            log.info("找到 reCAPTCHA iframe (via title)")
-        else:
-            log.info("尝试遍历所有 iframe...")
-            all_frames = page.eles('css:iframe')
-            log.info(f"页面中共找到 {len(all_frames)} 个 iframe")
-            for idx, fr in enumerate(all_frames):
-                src = fr.attr("src") or ""
-                title = fr.attr("title") or ""
-                log.info(f"  iframe[{idx}] src={src[:60]} title={title[:30]}")
-                if "recaptcha" in src.lower() or "recaptcha" in title.lower():
-                    recaptcha_frame = fr
-                    log.info(f"手动匹配到 reCAPTCHA iframe[{idx}]")
-                    break
-
-    if not recaptcha_frame:
-        log.error("未找到任何 reCAPTCHA iframe")
-        debug_dump(page, "no_recaptcha_frame")
-        return False
-
-    # 在 iframe 内找到并点击 checkbox
-    checkbox_found = False
-    try:
-        for sel in ['css:.recaptcha-checkbox-checkmark', 'css:.recaptcha-checkbox-input', 'css:input[type="checkbox"]']:
-            try:
-                cb = recaptcha_frame.ele(sel, timeout=5)
-                if cb:
-                    log.info(f"在 iframe 中找到 checkbox: {sel}")
-                    cb.click()
-                    checkbox_found = True
-                    log.info("已点击 checkbox")
-                    break
-            except Exception as e:
-                log.warning(f"选择器 {sel} 失败: {e}")
-                continue
-
-        if not checkbox_found:
-            try:
-                cb = recaptcha_frame.ele('@role="checkbox"', timeout=5)
-                if cb:
-                    cb.click()
-                    checkbox_found = True
-                    log.info("通过 role=checkbox 点击成功")
-            except Exception as e:
-                log.warning(f"role=checkbox 失败: {e}")
-    except Exception as e:
-        log.error(f"操作 iframe 内元素失败: {e}")
-        debug_dump(page, "iframe_click_fail")
-        return False
-
-    if not checkbox_found:
-        log.info("未找到 checkbox，可能已自动通过")
-        time.sleep(3)
-        return True
-
-    time.sleep(random.uniform(3, 6))
-
-    # 处理 reCAPTCHA 挑战（音频验证码）
-    for attempt in range(MAX_RETRY):
-        log.info(f"第 {attempt + 1} 次尝试 reCAPTCHA 挑战...")
-        debug_dump(page, f"challenge_start_{attempt}")
-
-        challenge_frame = None
-        log.info("尝试查找 challenge iframe (bframe)...")
-        challenge_frame = page.get_frame('@src*="bframe"')
-        if challenge_frame:
-            log.info("找到 challenge iframe (bframe)")
-        else:
-            all_frames = page.eles('css:iframe')
-            for fr in all_frames:
-                src = fr.attr("src") or ""
-                if "recaptcha" in src.lower() and "bframe" in src.lower():
-                    challenge_frame = fr
-                    log.info(f"找到 challenge iframe: {src[:60]}")
-                    break
-
-        if not challenge_frame:
-            log.info("未找到 challenge iframe，假设已通过验证")
-            return True
-
-        # 在 challenge iframe 中点击音频按钮
-        audio_btn = None
-        audio_selectors = [
-            '@id="recaptcha-audio-button"',
-            '.rc-button-audio',
-            '@aria-label="Audio CAPTCHA"',
-        ]
-        for sel in audio_selectors:
-            try:
-                audio_btn = challenge_frame.ele(sel, timeout=5)
-                if audio_btn:
-                    log.info(f"找到音频按钮: {sel}")
-                    break
-            except Exception:
-                pass
-
-        if audio_btn:
-            audio_btn.click()
-            log.info("已点击音频按钮")
-            time.sleep(random.uniform(3, 5))
-        else:
-            log.info("未找到音频按钮")
-
-        # 下载音频文件
-        audio_link = None
-        audio_selectors = [
-            '.rc-audiochallenge-tdownload-link',
-            '@href*="audio"',
-        ]
-        for sel in audio_selectors:
-            try:
-                audio_link = challenge_frame.ele(sel, timeout=5)
-                if audio_link:
-                    log.info(f"找到音频下载链接: {sel}")
-                    break
-            except Exception:
-                pass
-
-        if not audio_link:
-            log.warning(f"未找到音频下载链接，重试...")
-            debug_dump(page, f"no_audio_link_{attempt}")
-            time.sleep(2)
-            continue
-
-        # 下载音频
-        audio_url = audio_link.attr("href")
-        audio_file = SHOT_DIR / f"audio_{attempt}.mp3"
+        # 查找播放按钮
         try:
-            resp = requests.get(audio_url, timeout=30)
-            audio_file.write_bytes(resp.content)
-            log.info(f"音频已下载: {len(resp.content)} bytes")
-        except Exception as e:
-            log.warning(f"下载音频失败: {e}")
-            continue
-
-        # 转换为 WAV
-        wav_file = SHOT_DIR / f"audio_{attempt}.wav"
+            play_btn = page.ele('css:button[aria-label="Play"]', timeout=2)
+            if play_btn:
+                log.info("找到播放按钮，点击播放")
+                play_btn.click()
+                time.sleep(2)
+                break
+        except Exception:
+            pass
+        
+        # 查找跳过按钮
         try:
-            pydub.AudioSegment.from_mp3(str(audio_file)).export(str(wav_file), format="wav")
-            log.info("音频已转换为 WAV")
-        except Exception as e:
-            log.warning(f"WAV 转换失败: {e}")
-            continue
-
-        # 语音识别
-        try:
-            recognizer = sr.Recognizer()
-            with sr.AudioFile(str(wav_file)) as source:
-                audio_data = recognizer.record(source)
-                text = recognizer.recognize_google(audio_data, language="en-US")
-            log.info(f"识别结果: {text}")
-        except Exception as e:
-            log.warning(f"语音识别失败: {e}")
-            continue
-
-        # 输入答案并提交
-        try:
-            input_box = challenge_frame.ele('@id="audio-response"', timeout=5)
-            if input_box:
-                input_box.input(text)
-                log.info(f"已输入答案: {text}")
-                time.sleep(1)
-
-                verify_btn = challenge_frame.ele('@id="recaptcha-verify-button"', timeout=5)
-                if verify_btn:
-                    verify_btn.click()
-                    log.info("已点击验证按钮")
-                else:
-                    for vs in ['.rc-button-default', '@aria-label="Verify"']:
-                        try:
-                            vb = challenge_frame.ele(vs, timeout=3)
-                            if vb:
-                                vb.click()
-                                log.info(f"通过 {vs} 点击验证按钮")
-                                break
-                        except Exception:
-                            pass
-        except Exception as e:
-            log.warning(f"输入验证失败: {e}")
-
-        time.sleep(5)
-
-        # 检查验证是否通过
-        try:
-            remaining_challenge = page.get_frame('@src*="bframe"')
-            if not remaining_challenge:
-                log.info("reCAPTCHA 验证通过")
+            skip_btn = page.ele('css:button:contains("Skip")', timeout=2)
+            if skip_btn:
+                log.info("找到跳过按钮，点击跳过")
+                skip_btn.click()
+                time.sleep(2)
                 return True
-            else:
-                log.info("仍有 challenge iframe，继续下一轮尝试")
-        except Exception as e:
-            log.warning(f"检查验证状态失败: {e}")
-            return True
-
-    log.error("reCAPTCHA 音频识别全部失败")
-    debug_dump(page, "final_fail")
-    return False
+        except Exception:
+            pass
+        
+        time.sleep(1)
+    
+    # 尝试通过 JS 播放视频
+    try:
+        page.run_js("var v=document.querySelector('video');if(v){v.play();}")
+        log.info("通过 JS 播放视频")
+    except Exception:
+        pass
+    
+    # 等待视频播放完成（假设视频最长60秒）
+    log.info("等待广告视频播放...")
+    for check in range(60):
+        try:
+            # 检查视频是否结束
+            ended = page.run_js("var v=document.querySelector('video');return v&&v.ended;")
+            if ended:
+                log.info("视频播放完成")
+                return True
+        except Exception:
+            pass
+        
+        # 检查是否有跳过按钮
+        try:
+            skip_btn = page.ele('css:button:contains("Skip")', timeout=1)
+            if skip_btn:
+                log.info("找到跳过按钮，点击跳过")
+                skip_btn.click()
+                time.sleep(3)
+                return True
+        except Exception:
+            pass
+        
+        time.sleep(1)
+    
+    log.warning("视频播放超时，继续执行")
+    return True
 
 
 def inject_cookies(page, cookie_str: str):
@@ -533,53 +371,16 @@ def run_one(label: str, renew_url: str, cookie_str: str):
         log.info("点击续期按钮...")
         renew_btn.click()
         
-        # 等待 reCAPTCHA 出现
-        log.info("等待 reCAPTCHA 出现...")
-        time.sleep(10)
-
-        # 处理 reCAPTCHA
-        captcha_passed = solve_recaptcha_audio(page)
-        if captcha_passed:
-            log.info("reCAPTCHA 通过，等待续期请求提交...")
+        # 关键改动：点击续期按钮后，处理广告视频而不是 reCAPTCHA
+        ad_handled = handle_ad_video(page)
+        
+        if ad_handled:
+            log.info("广告视频处理完成，等待续期确认...")
+            time.sleep(5)
             
-            # 保存当前页面状态
-            debug_dump(page, "after_captcha")
+            # 保存状态
+            debug_dump(page, "after_ad")
             
-            # 关键改动：reCAPTCHA 通过后，**再次点击续期按钮**
-            # 因为第一次点击可能只触发了 reCAPTCHA，没有真正提交
-            log.info("重新查找并点击续期按钮以提交续期请求...")
-            time.sleep(3)
-            
-            renew_btn2 = None
-            for btn_text in ["Renew server", "Renew", "Extend", "Continue"]:
-                try:
-                    renew_btn2 = page.ele(f"text:{btn_text}", timeout=5)
-                    if renew_btn2:
-                        log.info(f"找到续期按钮（第二次）: text:{btn_text}")
-                        break
-                except Exception:
-                    pass
-            
-            if not renew_btn2:
-                try:
-                    renew_btn2 = page.ele('css:button.purple', timeout=5)
-                    if renew_btn2:
-                        log.info("找到紫色续期按钮（第二次）")
-                except Exception:
-                    pass
-            
-            if renew_btn2:
-                log.info("再次点击续期按钮...")
-                renew_btn2.click()
-                log.info("等待续期处理...")
-                time.sleep(20)
-            else:
-                log.info("未找到续期按钮，等待页面自动处理...")
-                time.sleep(20)
-            
-            # 保存最终状态
-            debug_dump(page, "after_final_wait")
-
             # 刷新页面同步状态
             log.info("刷新页面同步状态...")
             page.get(renew_url)
@@ -602,8 +403,8 @@ def run_one(label: str, renew_url: str, cookie_str: str):
                 debug_dump(page, "time_not_increased")
                 return {"label": label, "sid": server_id, "ok": False, "msg": f"时间未增加 ({old_sec}s -> {new_sec}s)"}
         else:
-            log.warning("reCAPTCHA 未能通过")
-            return {"label": label, "sid": server_id, "ok": False, "msg": "reCAPTCHA 流程未完成"}
+            log.warning("广告视频处理失败")
+            return {"label": label, "sid": server_id, "ok": False, "msg": "广告视频处理失败"}
 
     except Exception as e:
         log.error(f"运行异常: {e}")
