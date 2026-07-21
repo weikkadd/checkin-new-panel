@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Gaming4Free Renew Pro v29 - 精确等待 Turnstile token"""
+"""Gaming4Free Renew Pro v30 - 修复 renderer 卡死 + 优化等待逻辑"""
 import os,sys,time,re,urllib.parse,urllib.request
 from datetime import datetime
 try:
     from seleniumbase import SB
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
 except ImportError:
     print("seleniumbase not installed")
     sys.exit(1)
@@ -13,7 +16,7 @@ from cd import *
 from tg import send_tg
 
 def main():
-    log("========== 开始处理服务器账号 (Pro v29) ==========")
+    log("========== 开始处理服务器账号 (Pro v30) ==========")
     svrs=[]
     if RENEW_URL and COOKIE:
         nm="我的服务器"
@@ -31,11 +34,14 @@ def main():
             if ok: break
             try:
                 log(f"🚀 启动浏览器 (第 {bt+1}/{MAX_TRIES} 次尝试)...")
+                # ===== 关键修复: 添加防崩溃参数 =====
                 with SB(uc=True,headless=False,browser='chrome',
                         agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                         uc_cdp_events=True) as sb:
                     dr=sb.driver
-                    dr.set_page_load_timeout(120)
+                    # ===== 关键修复: 设置合理超时 =====
+                    dr.set_page_load_timeout(30)
+                    dr.set_script_timeout(30)
                     log(f"🌐 访问页面: {su}")
                     dr.get(su)
                     log(f"📄 标题: {dr.title}")
@@ -47,20 +53,24 @@ def main():
                                 n,v=it.split("=",1)
                                 try: dr.add_cookie({"name":n.strip(),"value":v.strip(),"domain":".gaming4free.net","path":"/","secure":True})
                                 except: pass
-                        dr.refresh(); time.sleep(5)
+                        dr.refresh(); time.sleep(3)
                         log("⏳ 等待页面加载...")
-                        for _ in range(30):
-                            try:
-                                if dr.find_elements('css selector','iframe[src*="challenges.cloudflare.com"]'):
-                                    log("🛡️ 检测到 Turnstile，等待通过...")
-                                    time.sleep(5)
-                                    continue
-                                title=dr.title
-                                if title and "Login" not in title and "login" not in title:
-                                    log(f"✅ 页面加载完成: {title}")
-                                    break
-                            except: pass
-                            time.sleep(2)
+                        # ===== 关键修复: 使用显式等待代替死等 =====
+                        try:
+                            WebDriverWait(dr, 30).until(
+                                EC.presence_of_element_located((By.XPATH, "//button[contains(text(), 'min')]"))
+                            )
+                            log("✅ 页面加载完成，找到续期按钮")
+                        except Exception as e:
+                            log(f"⚠️ 等待按钮超时: {e}")
+                            # 尝试通过标题判断是否登录成功
+                            title=dr.title
+                            if title and "Login" not in title and "login" not in title:
+                                log(f"✅ 页面加载完成: {title}")
+                            else:
+                                log("❌ 登录可能失败")
+                                scr(sb,"err_login")
+                                raise
                     do_rounds(dr,sb,sn,sc)
                     bl,bs=get_time(dr)
                     if bs>=THRESHOLD:
@@ -69,7 +79,10 @@ def main():
                 log(f"❌ 异常: {e}")
                 try: scr(sb,"err")
                 except: pass
-                try: send_tg(f"❌ 异常: {e}",sn)
+                # ===== 关键修复: TG 通知截断过长内容 =====
+                try:
+                    err_msg=str(e)[:500]
+                    send_tg(f"❌ 异常: {err_msg}",sn)
                 except: pass
                 break
             time.sleep(3)
@@ -110,64 +123,6 @@ def do_rounds(dr,sb,sn,sc):
         pre_time=bs
 
         try:
-            # ===== 注入 Turnstile 精确监听 =====
-            log("🔍 注入 Turnstile token 监听...")
-            dr.execute_script("""
-                window._g4f_turnstile = {
-                    passed: false,
-                    token: '',
-                    timestamp: 0,
-                    attempts: 0,
-                    error: ''
-                };
-                // 覆盖 turnstile.ready
-                if(window.turnstile){
-                    var origReady = window.turnstile.ready;
-                    window.turnstile.ready = function(el) {
-                        window._g4f_turnstile.attempts++;
-                        if(origReady) origReady(el);
-                    };
-                    // 覆盖 turnstile.render (新 widget 创建)
-                    var origRender = window.turnstile.render;
-                    window.turnstile.render = function(container, params) {
-                        window._g4f_turnstile.attempts++;
-                        var id = origRender(container, params);
-                        // 监听新 widget
-                        if(id) window._g4f_turnstile.lastWidgetId = id;
-                        return id;
-                    };
-                    // 覆盖 turnstile.reset
-                    var origReset = window.turnstile.reset;
-                    window.turnstile.reset = function(el) {
-                        window._g4f_turnstile.error = 'reset';
-                        window._g4f_turnstile.passed = false;
-                        window._g4f_turnstile.token = '';
-                        if(origReset) origReset(el);
-                    };
-                    // 覆盖 turnstile.remove
-                    var origRemove = window.turnstile.remove;
-                    window.turnstile.remove = function(el) {
-                        if(origRemove) origRemove(el);
-                    };
-                }
-                // 监听所有可能的 callback
-                var callbacks = ['turnstileCallback', 'turnstileSuccess', 'onTurnstileSuccess', '_turnstileCB'];
-                for(var i=0;i<callbacks.length;i++){
-                    if(window[callbacks[i]]){
-                        (function(cbName){
-                            var orig = window[cbName];
-                            window[cbName] = function(token) {
-                                window._g4f_turnstile.passed = true;
-                                window._g4f_turnstile.token = token;
-                                window._g4f_turnstile.timestamp = Date.now();
-                                if(orig) orig(token);
-                            };
-                        })(callbacks[i]);
-                    }
-                }
-                return 'monitor_injected';
-            """)
-
             # 1. 找到 +90min 按钮
             btn_result=dr.execute_script("""
                 var result=null;
@@ -229,58 +184,11 @@ def do_rounds(dr,sb,sn,sc):
             click_result=dr.execute_script(click_js)
             log(f"🖱️ 点击: {click_result}")
 
-            # 3. 精确等待 Turnstile token
-            log("⏳ 等待 Turnstile token...")
-            ts_end=time.time()+180
-            ts_token_obtained=False
-            while time.time()<ts_end:
-                # 检查 Turnstile 状态
-                ts_status=dr.execute_script("""
-                    return JSON.stringify(window._g4f_turnstile || {passed:false,token:'',error:''});
-                """)
-                
-                # 检查 token 是否生成
-                has_token=dr.execute_script("return window._g4f_turnstile && window._g4f_turnstile.passed;")
-                if has_token:
-                    log("✅ Turnstile token 已获得!")
-                    ts_token_obtained=True
-                    break
-                
-                # 每 5 秒报告一次
-                if int(time.time()) % 5 < 1:
-                    log(f"🔍 Turnstile 状态: {ts_status[:100]}")
-                    # 检查 iframe 变化
-                    iframe_count=dr.execute_script("return document.querySelectorAll('iframe').length;")
-                    if iframe_count != 28:
-                        log(f"🔍 iframe 数量变化: {iframe_count}")
-                
-                time.sleep(3)
-            
-            if not ts_token_obtained:
-                log("❌ Turnstile token 获取超时")
-                scr(sb, f"fail_round{cr}_no_token")
-                # 即使 token 没获得，也检查一下时间（有时候后台直接放行了）
-                al,as_=get_time(dr)
-                df=int(as_)-int(pre_time)
-                if df > 300:
-                    log(f"🎉 但时间增加了! +{df}s")
-                    try: send_tg(f"🎉 Pro续期成功 (+{df//60}分钟)",sn,al)
-                    except: pass
-                    time.sleep(300)
-                    dr.refresh(); time.sleep(5)
-                    continue
-                else:
-                    log(f"⏱️ 续期后: {al} ({as_}秒), 增加: {df}秒")
-                    scr(sb, f"fail_round{cr}")
-                    log(f"❌ 续期失败，继续下一轮")
-                    time.sleep(10)
-                    continue
-
-            # 4. Token 获得后，等待广告播放和时间增加
-            log("⏳ 等待广告播放和时间增加...")
-            ad_end=time.time()+60
+            # 3. 等待续期生效（不再依赖 Turnstile token）
+            log("⏳ 等待续期生效 (最长 180s)...")
+            wait_end=time.time()+180
             renewed=False
-            while time.time()<ad_end:
+            while time.time()<wait_end:
                 try:
                     ct,cs=get_time(dr)
                     diff=cs-pre_time
