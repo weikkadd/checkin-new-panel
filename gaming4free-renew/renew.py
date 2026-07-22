@@ -1,5 +1,5 @@
-﻿# -*- coding: utf-8 -*-
-import os, sys, time, json, traceback
+# -*- coding: utf-8 -*-
+import os, sys, time, json, traceback, re
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -16,12 +16,6 @@ def log(msg):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
 
-def get_chromedriver():
-    for p in ["/usr/bin/chromedriver", "/usr/local/bin/chromedriver", "/opt/chrome/chromedriver"]:
-        if os.path.exists(p):
-            return p
-    return "/usr/bin/chromedriver"
-
 def init_browser(headless=True):
     opts = Options()
     if headless:
@@ -36,7 +30,12 @@ def init_browser(headless=True):
     opts.add_experimental_option("useAutomationExtension", False)
     ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     opts.add_argument(f"--user-agent={ua}")
-    svc = Service(executable_path=get_chromedriver())
+    cd = "/usr/bin/chromedriver"
+    for p in ["/usr/bin/chromedriver", "/usr/local/bin/chromedriver", "/opt/chrome/chromedriver"]:
+        if os.path.exists(p):
+            cd = p
+            break
+    svc = Service(executable_path=cd)
     dr = webdriver.Chrome(service=svc, options=opts)
     dr.set_page_load_timeout(120)
     try:
@@ -58,11 +57,8 @@ def inject_cookie(dr, cookie_str):
                 pass
 
 def get_time(dr):
-    """读取 remaining 时间，返回 (时间字符串, 总秒数)"""
-    import re
     for attempt in range(3):
         try:
-            # 方式1: 遍历所有元素找包含 remaining 文本的
             elements = dr.find_elements(By.XPATH, "//*[contains(text(),'remaining')]")
             if not elements:
                 elements = dr.find_elements(By.XPATH, "//*[contains(text(),'Remaining')]")
@@ -71,38 +67,34 @@ def get_time(dr):
                     txt = el.text.strip() or el.get_attribute("textContent").strip()
                     if not txt:
                         continue
-                    txt_clean = re.sub(r"(?i)remaining", "", txt).strip()
-                    m = re.search(r"(\d{1,2}:\d{2}:\d{2})", txt_clean)
+                    txt_clean = re.sub(r'(?i)remaining', '', txt).strip()
+                    m = re.search(r'(\d{1,2}:\d{2}:\d{2})', txt_clean)
                     if m:
                         time_str = m.group(1)
-                        parts = time_str.split(":")
+                        parts = time_str.split(':')
                         total = int(parts[0])*3600 + int(parts[1])*60 + int(parts[2])
                         log(f"✅ remaining 行: {time_str} (行: {txt[:50]})")
                         return time_str, total
-                    m2 = re.search(r"(\d{1,2}:\d{2})", txt_clean)
+                    m2 = re.search(r'(\d{1,2}:\d{2})', txt_clean)
                     if m2:
                         time_str = m2.group(1)
-                        parts = time_str.split(":")
+                        parts = time_str.split(':')
                         total = int(parts[0])*60 + int(parts[1])
                         log(f"✅ remaining 行: {time_str} (行: {txt[:50]})")
                         return time_str, total
-            # 方式2: JS 全文搜索 + 正则提取
             body_text = dr.execute_script("return document.body ? document.body.innerText : '';")
-            for pat in [r"(\d{1,2}:\d{2}:\d{2})\s*remaining",
-                        r"remaining[^\d]*(\d{1,2}:\d{2}:\d{2})",
-                        r"(\d{1,2}:\d{2}:\d{2})\n?remaining"]:
+            for pat in [r'(\d{1,2}:\d{2}:\d{2})\s*remaining', r'remaining[^\d]*(\d{1,2}:\d{2}:\d{2})', r'(\d{1,2}:\d{2}:\d{2})\n?remaining']:
                 m = re.search(pat, body_text, re.IGNORECASE)
                 if m:
                     time_str = m.group(1)
-                    parts = time_str.split(":")
+                    parts = time_str.split(':')
                     total = int(parts[0])*3600 + int(parts[1])*60 + int(parts[2])
                     log(f"✅ remaining 行: {time_str} (正则匹配)")
                     return time_str, total
-            # 方式3: 任意 HH:MM:SS (取最后一个，通常是倒计时)
-            all_times = re.findall(r"(\d{1,2}:\d{2}:\d{2})", body_text)
+            all_times = re.findall(r'(\d{1,2}:\d{2}:\d{2})', body_text)
             if all_times:
                 time_str = all_times[-1]
-                parts = time_str.split(":")
+                parts = time_str.split(':')
                 total = int(parts[0])*3600 + int(parts[1])*60 + int(parts[2])
                 log(f"✅ remaining 行: {time_str} (全文匹配, 候选: {len(all_times)})")
                 return time_str, total
@@ -124,6 +116,58 @@ def scr(dr, name):
     except:
         pass
 
+def find_button(dr):
+    return dr.execute_script("""
+        var allEls = document.querySelectorAll('button, a, [role="button"]');
+        for (var i = 0; i < allEls.length; i++) {
+            var el = allEls[i];
+            var t = (el.innerText || el.textContent || '').trim();
+            if (t.indexOf('90') !== -1 && t.indexOf('min') !== -1) {
+                var rect = el.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) {
+                    return t.substring(0, 50);
+                }
+            }
+        }
+        return '';
+    """)
+
+def click_button(dr):
+    return dr.execute_script("""
+        var allEls = Array.from(document.querySelectorAll('button, a, [role="button"]'));
+        for (var i = 0; i < allEls.length; i++) {
+            var el = allEls[i];
+            var t = (el.innerText || el.textContent || '').trim();
+            if (t.indexOf('90') !== -1 && t.indexOf('min') !== -1) {
+                var rect = el.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0 && !el.disabled) {
+                    el.scrollIntoView({block: 'center'});
+                    el.click();
+                    return 'clicked:' + el.tagName + ':' + t.substring(0, 30);
+                }
+            }
+        }
+        return 'not_found';
+    """)
+
+def wait_for_cooldown(dr, max_wait=600):
+    waited = 0
+    interval = 30
+    while waited < max_wait:
+        time.sleep(interval)
+        waited += interval
+        try:
+            dr.refresh()
+            time.sleep(3)
+        except:
+            pass
+        btn = find_button(dr)
+        if btn and ('watch ad' in btn.lower() or 'watch' in btn.lower()):
+            log(f"✅ 按钮已恢复: {btn}")
+            return True
+        log(f"⏳ 仍在冷却... 已等 {waited}s, 按钮: {btn}")
+    return False
+
 def do_rounds(dr, sn, su, max_rounds=10):
     cr = 0
     while cr < max_rounds:
@@ -133,163 +177,104 @@ def do_rounds(dr, sn, su, max_rounds=10):
         bl, bs = get_time(dr)
         if not bl:
             log("⚠️ 无法获取剩余时间，刷新重试")
-            dr.refresh()
-            time.sleep(5)
+            try: dr.refresh(); time.sleep(5)
+            except: pass
             continue
         log(f"⏱️ 当前剩余时长: {bl} ({bs}秒)")
 
         pre_time = bs
         pre_ts = time.time()
 
-        # ===== 第一轮：Livewire 诊断 =====
-        if cr == 1:
+        # 查找按钮并检测状态
+        btn_text = find_button(dr)
+        if not btn_text:
+            log("❌ 未找到 +90min 按钮!")
+            scr(dr, f"fail_round{cr}_no_btn")
+            time.sleep(10)
+            try: dr.refresh(); time.sleep(5)
+            except: pass
+            continue
+
+        has_watch_ad = 'watch ad' in btn_text.lower() or 'watch' in btn_text.lower()
+        log(f"🔍 按钮: {btn_text}, watch_ad={has_watch_ad}")
+
+        # 按钮在冷却中，等待恢复
+        if not has_watch_ad:
+            log("⏳ 按钮不在 watch ad 状态，正在冷却，等待恢复...")
             try:
-                diag = dr.execute_script(_LW_DIAGNOSE_JS)
-                log(f"🔧 Livewire 诊断:\n{diag}")
-            except Exception as e:
-                log(f"⚠️ 诊断失败: {e}")
-
-        # ===== 三层点击策略 =====
-        click_result = None
-
-        # Layer 1: Livewire v3 - $wire.extend()
-        try:
-            r1 = dr.execute_script(_LW_EXTEND_V3_JS)
-            log(f"🖱️ Layer1 (Livewire v3): {r1}")
-            if r1 and 'fail' not in r1 and 'error' not in r1:
-                click_result = r1
-        except Exception as e:
-            log(f"⚠️ Layer1 异常: {e}")
-
-        # Layer 2: Livewire v2 - emit('extend')
-        if not click_result:
-            try:
-                r2 = dr.execute_script(_LW_V2_JS)
-                log(f"🖱️ Layer2 (Livewire v2): {r2}")
-                if r2 and 'fail' not in r2 and 'error' not in r2:
-                    click_result = r2
-            except Exception as e:
-                log(f"⚠️ Layer2 异常: {e}")
-
-        # Layer 3: wire:click 鼠标事件派发
-        if not click_result:
-            try:
-                r3 = dr.execute_script(_LW_CLICK_JS)
-                log(f"🖱️ Layer3 (wire:click dispatch): {r3}")
-                if r3 and 'not_found' not in r3 and 'error' not in r3:
-                    click_result = r3
-            except Exception as e:
-                log(f"⚠️ Layer3 异常: {e}")
-
-        # Layer 4: 回退 - 普通点击
-        if not click_result:
-            log("⚠️ Livewire 方式均未成功，回退到普通点击")
-            btn_result = dr.execute_script("""
-                var result=null;
-                var allEls=Array.from(document.querySelectorAll('button,a,[role="button"]'));
-                for(var i=0;i<allEls.length;i++){
-                    var el=allEls[i];
-                    var t=(el.innerText||el.textContent||'').trim();
-                    if(t.indexOf('90')!==-1&&t.indexOf('min')!==-1){
-                        var rect=el.getBoundingClientRect();
-                        if(rect.width>0&&rect.height>0&&!el.disabled){
-                            result={text:t.substring(0,30),disabled:el.disabled,visible:true,
-                                    wireClick:el.getAttribute('wire\\:click')||el.getAttribute('wire\\:click\\.prevent')||''};
-                            break;
-                        }
+                cd_text = dr.execute_script("""
+                    var bodyText = document.body ? document.body.innerText : '';
+                    var patterns = [/next.*?(\d{1,2}):(\d{2})/i, /cooldown.*?(\d{1,2}):(\d{2})/i, /wait.*?(\d{1,2}):(\d{2})/i];
+                    for (var i = 0; i < patterns.length; i++) {
+                        var m = bodyText.match(patterns[i]);
+                        if (m) return m[0];
                     }
-                }
-                return result?JSON.stringify(result):'not_found';
-            """)
-            if btn_result == 'not_found':
-                log("❌ 未找到 +90min 按钮!")
-                scr(dr, f"fail_round{cr}_no_btn")
-                time.sleep(10)
-                dr.refresh()
-                time.sleep(5)
+                    return '';
+                """)
+                if cd_text:
+                    log(f"⏳ 冷却信息: {cd_text}")
+            except: pass
+
+            recovered = wait_for_cooldown(dr, max_wait=600)
+            if not recovered:
+                log("❌ 等待冷却超时，跳过本轮")
                 continue
+            bl, bs = get_time(dr)
+            pre_time = bs
+            log(f"⏱️ 冷却后剩余: {bl} ({bs}秒)")
 
-            bi = json.loads(btn_result)
-            log(f"🔍 按钮: {bi.get('text')}, disabled={bi.get('disabled')}, visible={bi.get('visible')}, wire:click={bi.get('wireClick')}")
+        # 点击按钮
+        click_result = click_button(dr)
+        log(f"🖱️ 点击: {click_result}")
 
-            if bi.get('disabled') or not bi.get('visible'):
-                log("⚠️ 按钮不可用")
-                scr(dr, f"fail_round{cr}_btn_disabled")
-                time.sleep(10)
-                dr.refresh()
-                time.sleep(5)
-                continue
+        if click_result == 'not_found':
+            log("❌ 点击时按钮消失了")
+            time.sleep(10)
+            try: dr.refresh(); time.sleep(5)
+            except: pass
+            continue
 
-            click_js = """
-                var allEls=Array.from(document.querySelectorAll('button,a,[role="button"]'));
-                for(var i=0;i<allEls.length;i++){
-                    var el=allEls[i];
-                    var t=(el.innerText||el.textContent||'').trim();
-                    if(t.indexOf('90')!==-1&&t.indexOf('min')!==-1){
-                        var rect=el.getBoundingClientRect();
-                        if(rect.width>0&&rect.height>0&&!el.disabled){
-                            el.scrollIntoView({block:'center'});
-                            el.click();
-                            return 'clicked:'+el.tagName+':'+t.substring(0,30);
-                        }
-                    }
-                }
-                return 'not_found';
-            """
-            click_result = dr.execute_script(click_js)
-            log(f"🖱️ Layer4 (普通点击): {click_result}")
-
-        # ===== 检测确认弹窗 =====
+        # 检测确认弹窗
         time.sleep(1.5)
         confirm_selectors = [
             (By.XPATH, "//button[contains(text(), 'Confirm')]"),
-            (By.XPATH, "//button[contains(text(), 'confirm')]"),
             (By.XPATH, "//button[contains(text(), 'Yes')]"),
             (By.XPATH, "//button[contains(text(), 'OK')]"),
             (By.XPATH, "//button[contains(text(), 'Renew')]"),
             (By.XPATH, "//button[contains(text(), 'Extend')]"),
-            (By.XPATH, "//button[contains(text(), 'Add')]"),
             (By.CSS_SELECTOR, ".swal2-confirm"),
             (By.CSS_SELECTOR, ".modal-footer button"),
-            (By.CSS_SELECTOR, "button[class*='confirm']"),
-            (By.CSS_SELECTOR, "button[class*='primary']"),
         ]
         for by, sel in confirm_selectors:
             try:
-                confirm_btn = WebDriverWait(dr, 2).until(
-                    EC.element_to_be_clickable((by, sel))
-                )
+                confirm_btn = WebDriverWait(dr, 2).until(EC.element_to_be_clickable((by, sel)))
                 confirm_btn.click()
                 log(f"✅ 处理确认弹窗: {sel}")
                 break
-            except:
-                continue
+            except: continue
 
-        # ===== 检测 alert =====
+        # 检测 alert
         try:
             alert = dr.switch_to.alert
             log(f"⚠️ 检测到 Alert: {alert.text}")
             alert.accept()
-        except:
-            pass
+        except: pass
 
-        # ===== 等待续期生效 (30s) =====
+        # 等待续期生效 (30s)
         log("⏳ 等待续期生效 (最长 30s)...")
         wait_end = time.time() + 30
-        renewed = False
         while time.time() < wait_end:
             try:
                 ct, cs = get_time(dr)
-                diff = int(cs) - int(pre_time)
-                if diff > 300:
-                    log(f"✅ 检测到时间增加 → {ct}, +{diff}秒")
-                    renewed = True
-                    break
-            except:
-                pass
+                if ct:
+                    diff = int(cs) - int(pre_time)
+                    if diff > 300:
+                        log(f"✅ 检测到时间增加 → {ct}, +{diff}秒")
+                        break
+            except: pass
             time.sleep(3)
 
-        # ===== 最终判断 =====
+        # 最终判断
         al, as_ = get_time(dr)
         df = int(as_) - int(pre_time) if as_ else 0
         elapsed = time.time() - pre_ts
@@ -299,10 +284,10 @@ def do_rounds(dr, sn, su, max_rounds=10):
             log(f"🎉 续期成功! +{df}s ({bl} → {al})")
             try: send_tg(f"🎉 [{sn}] Pro续期成功 (+{df//60}分钟)", sn, al)
             except: pass
-            log("💤 等待5分钟再续下一轮...")
-            time.sleep(300)
-            dr.refresh()
-            time.sleep(5)
+            log("💤 等待30秒再续下一轮...")
+            time.sleep(30)
+            try: dr.refresh(); time.sleep(5)
+            except: pass
             continue
         else:
             scr(dr, f"fail_round{cr}")
@@ -310,23 +295,20 @@ def do_rounds(dr, sn, su, max_rounds=10):
                 err_text = dr.execute_script("return document.body?document.body.innerText.substring(0,500):'';")
                 if err_text:
                     log(f"⚠️ 页面内容片段: {err_text[:300]}")
-            except:
-                pass
+            except: pass
             log(f"❌ 续期失败，继续下一轮")
             time.sleep(10)
-            dr.refresh()
-            time.sleep(5)
+            try: dr.refresh(); time.sleep(5)
+            except: pass
             continue
 
     return False
 
 def main():
-    log("========== 开始处理服务器账号 (Pro v30-fix) ==========")
-
-    cookie = os.environ.get("G4F_COOKIE") or os.environ.get("GAME4FREE_COOKIE", "")
-    server_url = os.environ.get("G4F_SERVER_URL") or os.environ.get("GAME4FREE_RENEW_URL", "")
-    server_name = os.environ.get("G4F_SERVER_NAME") or os.environ.get("GAME4FREE_ACCOUNT", "gaming4free")
-
+    log("========== 开始处理服务器账号 (Pro v31) ==========")
+    cookie = os.environ.get("G4F_COOKIE", "")
+    server_url = os.environ.get("G4F_SERVER_URL", "")
+    server_name = os.environ.get("G4F_SERVER_NAME", "gaming4free")
     if not cookie or not server_url:
         log("❌ 缺少环境变量 G4F_COOKIE 或 G4F_SERVER_URL")
         sys.exit(1)
@@ -337,41 +319,27 @@ def main():
         try:
             dr = init_browser(headless=True)
             log(f"🌐 访问页面: {server_url}")
-            try:
-                dr.get("https://gaming4free.net/login")
-            except Exception as e:
-                log(f"⚠️ 登录页加载超时，继续")
+            try: dr.get("https://gaming4free.net/login")
+            except Exception as e: log(f"⚠️ 登录页加载超时，继续")
             time.sleep(3)
-
             log("🍪 注入 Cookie...")
             inject_cookie(dr, cookie)
-
             log("⏳ 等待页面加载...")
-            try:
-                dr.get(server_url)
-            except Exception as e:
-                log(f"⚠️ 页面加载超时(正常)，继续执行")
+            try: dr.get(server_url)
+            except Exception as e: log(f"⚠️ 页面加载超时(正常)，继续执行")
             time.sleep(5)
-
             try:
-                WebDriverWait(dr, 30).until(
-                    EC.presence_of_element_located((By.XPATH, "//span[contains(text(),'remaining')]"))
-                )
-            except:
-                log("⚠️ 等待按钮超时，尝试继续...")
-
+                WebDriverWait(dr, 30).until(EC.presence_of_element_located((By.XPATH, "//*[contains(text(),'remaining')]")))
+            except: log("⚠️ 等待按钮超时，尝试继续...")
             title = dr.title
             log(f"📄 标题: {title}")
-
             if "Login" in title:
                 log("❌ Cookie 失效，仍在登录页")
                 dr.quit()
                 sys.exit(1)
-
             result = do_rounds(dr, server_name, server_url, max_rounds=10)
             dr.quit()
             return
-
         except Exception as e:
             log(f"❌ 异常: {e}")
             log(traceback.format_exc())
@@ -381,7 +349,6 @@ def main():
                 try: dr.quit()
                 except: pass
             time.sleep(10)
-
     log("❌ 3次尝试均失败")
 
 if __name__ == "__main__":
