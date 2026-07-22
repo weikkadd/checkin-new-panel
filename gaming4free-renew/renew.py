@@ -37,12 +37,13 @@ def main():
                 # ===== 关键修复: 添加防崩溃参数 =====
                 with SB(uc=True,headless=False,browser='chrome',
                         agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        uc_cdp_events=True,
-                        args=['--no-sandbox','--disable-dev-shm-usage','--disable-gpu','--disable-extensions']) as sb:
-                    dr=sb.driver
+                        uc_cdp_events=True) as sb:
+                    # 通过 driver 设置 Chrome 选项来加防崩溃参数
+                    # SeleniumBase UC 模式已内置 --no-sandbox 和 --disable-dev-shm-usage
+                    dr = sb.driver
                     # ===== 关键修复: 设置合理超时 =====
-                    dr.set_page_load_timeout(30)
-                    dr.set_script_timeout(30)
+                    dr.set_page_load_timeout(15)
+                    dr.set_script_timeout(15)
                     log(f"🌐 访问页面: {su}")
                     dr.get(su)
                     log(f"📄 标题: {dr.title}")
@@ -54,7 +55,11 @@ def main():
                                 n,v=it.split("=",1)
                                 try: dr.add_cookie({"name":n.strip(),"value":v.strip(),"domain":".gaming4free.net","path":"/","secure":True})
                                 except: pass
-                        dr.refresh(); time.sleep(3)
+                        try: dr.refresh(); time.sleep(3)
+                        except Exception as e:
+                            log(f"⚠️ refresh 失败，尝试直接导航: {e}")
+                            try: dr.get(su); time.sleep(5)
+                            except: pass
                         log("⏳ 等待页面加载...")
                         # ===== 关键修复: 使用显式等待代替死等 =====
                         try:
