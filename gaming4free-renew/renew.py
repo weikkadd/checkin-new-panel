@@ -291,9 +291,9 @@ def do_rounds(dr, sn, su, max_rounds=10):
 def main():
     log("========== 开始处理服务器账号 (Pro v30-fix) ==========")
 
-    cookie = os.environ.get("G4F_COOKIE", "")
-    server_url = os.environ.get("G4F_SERVER_URL", "")
-    server_name = os.environ.get("G4F_SERVER_NAME", "gaming4free")
+    cookie = os.environ.get("G4F_COOKIE") or os.environ.get("GAME4FREE_COOKIE", "")
+    server_url = os.environ.get("G4F_SERVER_URL") or os.environ.get("GAME4FREE_RENEW_URL", "")
+    server_name = os.environ.get("G4F_SERVER_NAME") or os.environ.get("GAME4FREE_ACCOUNT", "gaming4free")
 
     if not cookie or not server_url:
         log("❌ 缺少环境变量 G4F_COOKIE 或 G4F_SERVER_URL")
