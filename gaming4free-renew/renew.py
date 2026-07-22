@@ -30,7 +30,8 @@ def init_browser(headless=True):
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-gpu")
     opts.add_argument("--disable-blink-features=AutomationControlled")
-    opts.add_argument("--window-size=1920,1080")`n    opts.page_load_strategy = `eager`
+    opts.add_argument("--window-size=1920,1080")
+    opts.page_load_strategy = "eager"
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
     opts.add_experimental_option("useAutomationExtension", False)
     ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -336,14 +337,20 @@ def main():
         try:
             dr = init_browser(headless=True)
             log(f"🌐 访问页面: {server_url}")
-            dr.get("https://gaming4free.net/login")
+            try:
+                dr.get("https://gaming4free.net/login")
+            except Exception as e:
+                log(f"⚠️ 登录页加载超时，继续")
             time.sleep(3)
 
             log("🍪 注入 Cookie...")
             inject_cookie(dr, cookie)
 
             log("⏳ 等待页面加载...")
-            dr.get(server_url)
+            try:
+                dr.get(server_url)
+            except Exception as e:
+                log(f"⚠️ 页面加载超时(正常)，继续执行")
             time.sleep(5)
 
             try:
