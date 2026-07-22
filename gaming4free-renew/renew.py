@@ -37,7 +37,8 @@ def main():
                 # ===== 关键修复: 添加防崩溃参数 =====
                 with SB(uc=True,headless=False,browser='chrome',
                         agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        uc_cdp_events=True) as sb:
+                        uc_cdp_events=True,
+                        args=['--no-sandbox','--disable-dev-shm-usage','--disable-gpu','--disable-extensions']) as sb:
                     dr=sb.driver
                     # ===== 关键修复: 设置合理超时 =====
                     dr.set_page_load_timeout(30)
