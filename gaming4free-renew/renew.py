@@ -55,8 +55,32 @@ def save_screenshot(drv, name: str):
         log(f"截图失败: {e}", "WARN")
 
 def get_proxy_url() -> Optional[str]:
-    """从环境变量获取代理，支持 socks5:// / http:// / https://"""
-    return os.environ.get("PROXY_URL") or os.environ.get("PROXY")
+    """获取代理地址：
+    1. 优先用工作流 sing-box 建立的本地 socks5://127.0.0.1:1080 (IS_PROXY=true)
+    2. 回退解析 PROXY_URL 基础格式
+    """
+    # 1. 工作流 sing-box 成功时会设置 IS_PROXY=true
+    if os.environ.get("IS_PROXY") == "true":
+        log("使用 sing-box 本地代理: socks5://127.0.0.1:1080")
+        return "socks5://127.0.0.1:1080"
+
+    # 2. 解析 PROXY_URL 环境变量
+    raw = os.environ.get("PROXY_URL") or os.environ.get("PROXY") or ""
+    raw = raw.strip()
+    if not raw:
+        return None
+
+    # 已经是标准格式
+    if raw.startswith(("http://", "https://", "socks5://", "socks5h://")):
+        return raw
+
+    # 简单 ip:port
+    if re.match(r'^[\d.]+:\d+$', raw):
+        return f"http://{raw}"
+
+    # VLESS/VMess/TUIC 等复杂链接：无法直接用，记录警告并返回 None（直连）
+    log(f"代理链接格式不支持直接使用: {raw[:50]}... (将直连)", "WARN")
+    return None
 
 # ========== 核心：解析剩余时间 ==========
 def parse_remaining_time(text: str) -> Optional[int]:
