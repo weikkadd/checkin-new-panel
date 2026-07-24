@@ -290,8 +290,8 @@ def process_account(drv, name: str, url: str, cookie: str) -> bool:
     # 2. 访问服务器页面
     try:
         drv.get(url)
-        # 等待页面加载（可能有 CF/Turnstile）
-        drv.wait_for_ready_state_complete(timeout=30)
+        # 等待页面加载（可能有 CF/Turnstile） - 使用标准 Selenium 等待
+        WebDriverWait(drv, 30).until(lambda d: d.execute_script("return document.readyState") == "complete")
     except Exception as e:
         log(f"页面加载异常: {e}", "WARN")
 
